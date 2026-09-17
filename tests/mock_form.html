@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>学平险投保信息录入（Mock 测试页）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f2f3f7;
+    max-width: 420px;
+    margin: 0 auto;
+    padding: 16px 12px 40px;
+    color: #333;
+  }
+  .banner {
+    background: linear-gradient(135deg, #1a5bb5, #2e7be0);
+    color: #fff;
+    border-radius: 10px;
+    padding: 18px 16px;
+    margin-bottom: 14px;
+  }
+  .banner h1 { font-size: 17px; margin-bottom: 6px; }
+  .banner p { font-size: 12px; opacity: .85; }
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 4px 16px 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1a5bb5;
+    padding: 12px 0 4px;
+    border-bottom: 1px solid #eef1f6;
+  }
+  .field { display: flex; align-items: center; padding: 11px 0; border-bottom: 1px solid #f4f6fa; }
+  .field:last-child { border-bottom: none; }
+  .field label { width: 96px; font-size: 13px; color: #555; flex-shrink: 0; }
+  .field input, .field select {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    color: #222;
+    background: transparent;
+    padding: 4px 0;
+  }
+  .field select { height: 28px; }
+  .btn-submit {
+    display: block;
+    width: 100%;
+    border: none;
+    background: linear-gradient(135deg, #f59e23, #f5791f);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 22px;
+    padding: 12px 0;
+    cursor: pointer;
+  }
+  #result {
+    display: none;
+    background: #e8f5e9;
+    border: 1px solid #a5d6a7;
+    color: #2e7d32;
+    font-size: 13px;
+    line-height: 1.8;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 14px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <h1>中国太保 · 学平险投保信息录入</h1>
+  <p>Mock 测试页面 —— 仅用于 FormPilot 本地填表测试，不提交任何数据</p>
+</div>
+
+<div class="card">
+  <div class="section-title">学生信息</div>
+  <div class="field">
+    <label>学生姓名</label>
+    <input type="text" name="xm" placeholder="请输入姓名">
+  </div>
+  <div class="field">
+    <label>身份证号</label>
+    <input type="text" name="sfzh" maxlength="18" placeholder="请输入18位身份证号">
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title">监护人信息</div>
+  <div class="field">
+    <label>监护人姓名</label>
+    <input type="text" name="jhrmc" placeholder="请输入监护人姓名">
+  </div>
+  <div class="field">
+    <label>联系电话</label>
+    <input type="tel" name="lxdh" maxlength="11" placeholder="请输入11位手机号">
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title">投保信息</div>
+  <div class="field">
+    <label>保险方案</label>
+    <select name="baoxian">
+      <option value="">请选择</option>
+      <option value="basic">基础版（100元）</option>
+      <option value="enhanced">加强版（150元）</option>
+      <option value="premium">尊享版（200元）</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>保险员姓名</label>
+    <input type="text" name="bxyxm" placeholder="服务保险员姓名">
+  </div>
+</div>
+
+<button type="submit" class="btn-submit" onclick="return showResult()">提交投保信息</button>
+
+<div id="result"></div>
+
+<script>
+function showResult() {
+  var fields = ["xm", "sfzh", "jhrmc", "lxdh", "baoxian", "bxyxm"];
+  var names = {"xm": "学生姓名", "sfzh": "身份证号", "jhrmc": "监护人姓名",
+               "lxdh": "联系电话", "baoxian": "保险方案", "bxyxm": "保险员姓名"};
+  var lines = ["【提交预览】（Mock 页面，不真正提交）", ""];
+  fields.forEach(function(f) {
+    var el = document.getElementsByName(f)[0];
+    var val = el.tagName === "SELECT"
+      ? (el.selectedIndex >= 0 ? el.options[el.selectedIndex].text : "")
+      : el.value;
+    lines.push(names[f] + "：" + (val || "（空）"));
+  });
+  document.getElementById("result").style.display = "block";
+  document.getElementById("result").textContent = lines.join("\n");
+  return false; // 阻止真实提交
+}
+</script>
+
+</body>
+</html>

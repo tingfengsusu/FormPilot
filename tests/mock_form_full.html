@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>学平险投保信息录入（全字段 Mock 测试页）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f2f3f7;
+    max-width: 460px;
+    margin: 0 auto;
+    padding: 16px 12px 60px;
+    color: #333;
+  }
+  .banner {
+    background: linear-gradient(135deg, #1a5bb5, #2e7be0);
+    color: #fff;
+    border-radius: 10px;
+    padding: 18px 16px;
+    margin-bottom: 14px;
+  }
+  .banner h1 { font-size: 17px; margin-bottom: 6px; }
+  .banner p { font-size: 12px; opacity: .85; }
+  #counter {
+    display: inline-block;
+    margin-top: 8px;
+    background: rgba(255,255,255,.18);
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-size: 12px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 4px 16px 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1a5bb5;
+    padding: 12px 0 4px;
+    border-bottom: 1px solid #eef1f6;
+  }
+  .field { display: flex; align-items: center; padding: 11px 0; border-bottom: 1px solid #f4f6fa; }
+  .field:last-child { border-bottom: none; }
+  .field label { width: 96px; font-size: 13px; color: #555; flex-shrink: 0; }
+  .field input, .field select {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    color: #222;
+    background: transparent;
+    padding: 4px 0;
+  }
+  .field select { height: 28px; }
+  .btn-submit {
+    display: block;
+    width: 100%;
+    border: none;
+    background: linear-gradient(135deg, #f59e23, #f5791f);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 22px;
+    padding: 12px 0;
+    cursor: pointer;
+  }
+  #result {
+    display: none;
+    background: #e8f5e9;
+    border: 1px solid #a5d6a7;
+    color: #2e7d32;
+    font-size: 13px;
+    line-height: 1.8;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-top: 14px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+</style>
+</head>
+<body>
+
+<div class="banner">
+  <h1>中国太保 · 学平险投保信息录入</h1>
+  <p>全字段 Mock 测试页面 —— 覆盖身份证/户口本/Excel/保险员全部来源，不提交任何数据</p>
+  <span id="counter">已填 0 / 16</span>
+</div>
+
+<div class="card">
+  <div class="section-title">学生信息（身份证OCR）</div>
+  <div class="field">
+    <label>学生姓名</label>
+    <input type="text" name="xm" placeholder="请输入姓名">
+  </div>
+  <div class="field">
+    <label>性别</label>
+    <select name="xb">
+      <option value="">请选择</option>
+      <option value="男">男</option>
+      <option value="女">女</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>出生日期</label>
+    <input type="text" name="csrq" placeholder="格式：YYYY-MM-DD">
+  </div>
+  <div class="field">
+    <label>民族</label>
+    <input type="text" name="mz" placeholder="如：汉">
+  </div>
+  <div class="field">
+    <label>身份证号</label>
+    <input type="text" name="sfzh" maxlength="18" placeholder="请输入18位身份证号">
+  </div>
+  <div class="field">
+    <label>户籍地址</label>
+    <input type="text" name="dz" placeholder="请输入证件地址">
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title">监护人信息（户口本 / Excel）</div>
+  <div class="field">
+    <label>监护人姓名</label>
+    <input type="text" name="jhrmc" placeholder="请输入监护人姓名">
+  </div>
+  <div class="field">
+    <label>与学生关系</label>
+    <select name="yhzgx">
+      <option value="">请选择</option>
+      <option value="父子">父子</option>
+      <option value="母子">母子</option>
+      <option value="祖孙">祖孙</option>
+      <option value="其他">其他</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>户主姓名</label>
+    <input type="text" name="hzxm" placeholder="户口本户主姓名">
+  </div>
+  <div class="field">
+    <label>联系电话</label>
+    <input type="tel" name="lxdh" maxlength="11" placeholder="请输入11位手机号">
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title">就读信息（Excel 名单）</div>
+  <div class="field">
+    <label>学校</label>
+    <input type="text" name="xx" placeholder="请输入学校全称">
+  </div>
+  <div class="field">
+    <label>班级</label>
+    <input type="text" name="bj" placeholder="如：三年级二班">
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title">投保信息</div>
+  <div class="field">
+    <label>保险方案</label>
+    <select name="baoxian">
+      <option value="">请选择</option>
+      <option value="basic">基础版（100元）</option>
+      <option value="enhanced">加强版（150元）</option>
+      <option value="premium">尊享版（200元）</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>保险员姓名</label>
+    <input type="text" name="bxyxm" placeholder="服务保险员姓名">
+  </div>
+  <div class="field">
+    <label>保险员工号</label>
+    <input type="text" name="bxygh" placeholder="保险员工号">
+  </div>
+  <div class="field">
+    <label>保险员电话</label>
+    <input type="tel" name="bxydh" maxlength="11" placeholder="保险员联系电话">
+  </div>
+</div>
+
+<button type="submit" class="btn-submit" onclick="return showResult()">提交投保信息</button>
+
+<div id="result"></div>
+
+<script>
+var FIELDS = [
+  {name: "xm",     label: "学生姓名",   group: "学生信息"},
+  {name: "xb",     label: "性别",       group: "学生信息"},
+  {name: "csrq",   label: "出生日期",   group: "学生信息"},
+  {name: "mz",     label: "民族",       group: "学生信息"},
+  {name: "sfzh",   label: "身份证号",   group: "学生信息"},
+  {name: "dz",     label: "户籍地址",   group: "学生信息"},
+  {name: "jhrmc",  label: "监护人姓名", group: "监护人信息"},
+  {name: "yhzgx",  label: "与学生关系", group: "监护人信息"},
+  {name: "hzxm",   label: "户主姓名",   group: "监护人信息"},
+  {name: "lxdh",   label: "联系电话",   group: "监护人信息"},
+  {name: "xx",     label: "学校",       group: "就读信息"},
+  {name: "bj",     label: "班级",       group: "就读信息"},
+  {name: "baoxian",label: "保险方案",   group: "投保信息"},
+  {name: "bxyxm",  label: "保险员姓名", group: "投保信息"},
+  {name: "bxygh",  label: "保险员工号", group: "投保信息"},
+  {name: "bxydh",  label: "保险员电话", group: "投保信息"}
+];
+
+function getValue(el) {
+  if (el.tagName === "SELECT") {
+    return el.selectedIndex > 0 ? el.options[el.selectedIndex].text : "";
+  }
+  return el.value;
+}
+
+function refreshCounter() {
+  var filled = 0;
+  FIELDS.forEach(function(f) {
+    var el = document.getElementsByName(f.name)[0];
+    if (el && getValue(el)) filled++;
+  });
+  document.getElementById("counter").textContent = "已填 " + filled + " / " + FIELDS.length;
+}
+
+document.addEventListener("input", refreshCounter);
+document.addEventListener("change", refreshCounter);
+
+function showResult() {
+  var lines = ["【提交预览】（Mock 页面，不真正提交）", ""];
+  var empty = [], warnings = [];
+  var currentGroup = "";
+  FIELDS.forEach(function(f) {
+    if (f.group !== currentGroup) {
+      currentGroup = f.group;
+      lines.push("—— " + currentGroup + " ——");
+    }
+    var el = document.getElementsByName(f.name)[0];
+    var val = el ? getValue(el) : "";
+    lines.push(f.label + "：" + (val || "（空）"));
+    if (!val) empty.push(f.label);
+  });
+
+  var sfzh = document.getElementsByName("sfzh")[0].value;
+  if (sfzh && !/^\d{17}[\dXx]$/.test(sfzh)) {
+    warnings.push("身份证号格式异常（应为18位）");
+  }
+  ["lxdh", "bxydh"].forEach(function(n) {
+    var v = document.getElementsByName(n)[0].value;
+    if (v && !/^1\d{10}$/.test(v)) {
+      warnings.push((n === "lxdh" ? "监护人电话" : "保险员电话") + "格式异常（应为11位手机号）");
+    }
+  });
+
+  lines.push("");
+  lines.push("完整度：" + (FIELDS.length - empty.length) + " / " + FIELDS.length);
+  if (empty.length) lines.push("未填项：" + empty.join("、"));
+  if (warnings.length) lines.push("格式提醒：" + warnings.join("；"));
+
+  var box = document.getElementById("result");
+  box.style.display = "block";
+  box.style.color = warnings.length ? "#e65100" : "#2e7d32";
+  box.textContent = lines.join("\n");
+  return false; // 阻止真实提交
+}
+</script>
+
+</body>
+</html>

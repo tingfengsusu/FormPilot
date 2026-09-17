@@ -1,0 +1,57 @@
+# 太保洛阳学平险（基础版）—— 真实页面配置（2026-09 实测）
+#
+# 入口说明：该页面是「微信内打开」的 H5，直接输基础网址会提示
+#   「活动不存在或已下线 ERR-2021」——可用的链接带活动参数，来自微信二维码：
+#   把二维码图片保存成文件 → 向导第 3 步「📷 从二维码图片导入 URL」
+#   （或 python tools/decode_qrcode.py <图片>），替换下面的 target_url。
+#
+# 定位说明（实测）：页面输入框没有 name/id，只有 placeholder；
+#   投保人区在前、被保险人区在后，同名字段用 >> nth=N 区分：
+#     nth=0 = 投保人（家长/监护人）    nth=1 = 被保险人（学生）
+#   页面为移动端 H5：桌面环境会被服务端拒绝，必须 context.mobile: true。
+#
+# 注意：target_url 含活动参数（mId/vCode），公开仓库前建议改为基础网址。
+
+name: 太保洛阳学平险_基础
+description: 太保洛阳学平险投保录入（基础版，真实页面实测配置）
+
+# 真实活动链接（来自微信二维码，2026-09 实测有效）
+target_url: https://dwx.cpic.com.cn/cxNew/dwx/mobilemsbv2/?mId=YOUR_ACTIVITY_ID&vCode=YOUR_ACTIVITY_CODE
+
+# 移动端 H5：必须，否则服务端返回空文档
+context:
+  mobile: true
+
+field_mapping:
+  # —— 被保险人（学生）——
+  - property: 学生姓名
+    locator: 'input[placeholder="请录入姓名"] >> nth=1'
+    required: true
+    verify_after_fill: true
+
+  - property: 学生身份证号
+    locator: 'input[placeholder="请录入身份证"] >> nth=1'
+    required: true
+    verify_after_fill: true
+
+  # —— 投保人（监护人）——
+  - property: 监护人姓名
+    locator: 'input[placeholder="请录入姓名"] >> nth=0'
+    required: true
+    verify_after_fill: true
+
+  - property: 监护人电话
+    locator: 'input[placeholder="请录入手机号"] >> nth=0'
+    required: true
+    verify_after_fill: true
+
+  # —— 保险方案：页面上方为三张方案卡片（点击选择，不是下拉框）——
+  # 太护学100 / 太乐康150 / 太尊享200；换方案改这里的 locator 文本
+  - property: 保险方案
+    locator: 'text=太护学100'
+    fill_mode: click
+    required: false
+    verify_after_fill: false
+
+submit_button: 'text=我要投保'
+verify_delay_ms: 800

@@ -1,0 +1,19 @@
+# 品种配置模板 —— 复制此文件并按需修改，不要直接编辑本文件
+
+name: 新品种名称
+description: 品种描述
+target_url: https://example.com/form
+
+# 需要填写的字段：属性名 → 页面输入框
+field_mapping:
+  - property: 属性名（必须在某个来源中存在）
+    locator: 'input[name="xxx"]'     # CSS 选择器
+    required: true
+    verify_after_fill: true
+    # rule: recommend_by_grade       # 可选：规则引擎标识
+
+submit_button: 'button[type="submit"]'
+verify_delay_ms: 500
+
+# 该品种需要哪些属性来源（可选，留空则按 field_mapping 推导）
+required_sources: []

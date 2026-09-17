@@ -1,0 +1,92 @@
+"""品种数据类。
+
+一个「品种」对应一种录入场景（如「太保洛阳学平险_基础」），配置了：
+  - 目标页面 URL
+  - 需要填写哪些属性（属性名 → 页面输入框的映射）
+  - 提交按钮位置、回读校验延迟等
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, List, Optional
+
+
+@dataclass
+class FieldMapping:
+    """单个字段映射：品种属性名 ↔ 页面输入框。"""
+
+    property: str                      # 属性名，如 "学生姓名"
+    locator: str                       # CSS 选择器，如 'input[name="xm"]'
+    required: bool = True              # 是否必填
+    verify_after_fill: bool = True     # 填完后是否回读校验
+    rule: Optional[str] = None         # 可选规则引擎标识，如 "recommend_by_grade"
+    fill_mode: str = "plain"           # 填写策略：plain=直接填；autocomplete=联想选择
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FieldMapping":
+        return cls(
+            property=data["property"],
+            locator=data["locator"],
+            required=data.get("required", True),
+            verify_after_fill=data.get("verify_after_fill", True),
+            rule=data.get("rule"),
+            fill_mode=data.get("fill_mode", "plain") or "plain",
+        )
+
+
+@dataclass
+class Product:
+    """品种数据类 — 某个录入场景的完整配置。"""
+
+    name: str
+    description: str = ""
+    target_url: str = ""
+    field_mapping: List[FieldMapping] = field(default_factory=list)
+    submit_button: str = 'button[type="submit"]'
+    verify_delay_ms: int = 500
+    # 该品种需要哪些属性来源（由 field_mapping 推导，也可显式声明）
+    required_sources: List[str] = field(default_factory=list)
+    # 浏览器上下文配置（移动端/微信 H5 等）：
+    #   {"mobile": true, "wechat": true, "referer": "...", "user_agent": "..."}
+    context: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Product":
+        mapping = [FieldMapping.from_dict(m) for m in data.get("field_mapping", [])]
+        return cls(
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            target_url=data.get("target_url", ""),
+            field_mapping=mapping,
+            submit_button=data.get("submit_button", 'button[type="submit"]'),
+            verify_delay_ms=int(data.get("verify_delay_ms", 500)),
+            required_sources=list(data.get("required_sources", [])),
+            context=dict(data.get("context") or {}),
+        )
+
+    def property_names(self) -> list[str]:
+        """返回该品种需要填写的所有属性名。"""
+        return [m.property for m in self.field_mapping]
+
+    def to_dict(self) -> dict:
+        """序列化为 yaml 可写格式（用于品种创建器保存）。"""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "target_url": self.target_url,
+            "field_mapping": [
+                {
+                    "property": m.property,
+                    "locator": m.locator,
+                    "required": m.required,
+                    "verify_after_fill": m.verify_after_fill,
+                    **({"rule": m.rule} if m.rule else {}),
+                    **({"fill_mode": m.fill_mode} if m.fill_mode != "plain" else {}),
+                }
+                for m in self.field_mapping
+            ],
+            "submit_button": self.submit_button,
+            "verify_delay_ms": self.verify_delay_ms,
+            "required_sources": list(self.required_sources),
+            **({"context": dict(self.context)} if self.context else {}),
+        }

@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 本地个人数据 —— 不入版本库
+# （注意：.gitignore 不支持行尾注释，注释必须单独一行）
+config/global_user_info.yaml
+config/settings.yaml
+.deepseek_profile/
+
+# 测试临时产物
+tests/_tmp_lib_test/
+tests/_samples/
+
+# 打包产物
+dist/

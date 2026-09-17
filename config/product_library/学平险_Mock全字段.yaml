@@ -1,0 +1,97 @@
+# 全字段本地测试品种 —— 指向 tests/mock_form_full.html
+# 覆盖设计中全部四类属性来源的字段，用于端到端联调：
+#   身份证OCR / 户口本OCR / Excel名单 / 保险员信息
+# 原 6 个 locator（xm/sfzh/jhrmc/lxdh/baoxian/bxyxm）与 mock_form.html 保持一致
+
+name: 学平险_Mock全字段
+description: 全字段 Mock 表单联调测试（真实 Playwright 填表 + 回读校验）
+
+target_url: file:///D:/Code/FormPilot/tests/mock_form_full.html
+
+field_mapping:
+  # —— 学生信息（身份证OCR 来源）——
+  - property: 学生姓名
+    locator: 'input[name="xm"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 性别
+    locator: 'select[name="xb"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 出生日期
+    locator: 'input[name="csrq"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 民族
+    locator: 'input[name="mz"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 学生身份证号
+    locator: 'input[name="sfzh"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 户籍地址
+    locator: 'input[name="dz"]'
+    required: false
+    verify_after_fill: true
+
+  # —— 监护人信息（Excel名单 / 户口本OCR 来源）——
+  - property: 监护人姓名
+    locator: 'input[name="jhrmc"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 与户主关系
+    locator: 'select[name="yhzgx"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 户主姓名
+    locator: 'input[name="hzxm"]'
+    required: false
+    verify_after_fill: true
+
+  - property: 监护人电话
+    locator: 'input[name="lxdh"]'
+    required: true
+    verify_after_fill: true
+
+  # —— 就读信息（Excel名单 来源）——
+  - property: 学校
+    locator: 'input[name="xx"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 班级
+    locator: 'input[name="bj"]'
+    required: true
+    verify_after_fill: true
+
+  # —— 投保信息 ——
+  - property: 保险方案
+    locator: 'select[name="baoxian"]'
+    rule: recommend_by_grade
+    required: true
+
+  - property: 保险员姓名
+    locator: 'input[name="bxyxm"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 保险员工号
+    locator: 'input[name="bxygh"]'
+    required: false
+    verify_after_fill: true
+
+  - property: 保险员电话
+    locator: 'input[name="bxydh"]'
+    required: false
+    verify_after_fill: true
+
+submit_button: 'button[type="submit"]'
+verify_delay_ms: 500

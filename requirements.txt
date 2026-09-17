@@ -1,0 +1,27 @@
+# FormPilot 依赖清单
+
+# Phase 1 骨架（必装）
+PyQt5>=5.15
+PyYAML>=6.0
+
+# Phase 2 OCR 接入
+openpyxl>=3.1        # Excel 名单读取
+
+# —— 以下为可选依赖，未配置 API key 时自动回退 Mock，可不装 ——
+# tencentcloud-sdk-python-ocr   # 腾讯云身份证 OCR（settings.yaml 配密钥后启用）
+# paddleocr>=2.7                # 本地 PaddleOCR 兜底（未装时户口本走多模态快路径）
+# paddlepaddle>=2.5             # PaddleOCR 运行引擎
+# openai>=1.0                   # DeepSeek 官方 API（llm.mode=api 时使用）
+
+# —— Phase 3/4 浏览器自动化（可选，未装则回退 Mock） ——
+# playwright>=1.40              # DOM 扫描（Phase 3）+ 自动填表（Phase 4）
+
+# —— 微信 H5 二维码入口（可选，用于从二维码图片导入活动链接） ——
+# pyzbar>=0.1                   # 二维码解码（轻量，优先）
+# qrcode>=7.4                   # 仅测试/生成示例二维码时使用
+# opencv-python-headless        # 二维码解码兜底（pyzbar 不可用时）
+
+# —— 测试（可选） ——
+# 测试为「纯脚本」设计，不装 pytest 也能跑：python tests/test_xxx.py
+# 装了 pytest 则可直接：pytest tests/
+# pytest>=8.0

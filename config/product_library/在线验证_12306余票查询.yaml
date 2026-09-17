@@ -1,0 +1,36 @@
+# 在线验证品种 —— 12306 余票查询（真实的国内网页表单，无需登录）
+# 用途：验证「定位功能」全链路（DOM 扫描 → 字段匹配 → 自动填表 → 回读校验）。
+# 查询按钮不会自动点击（半自动合规设计），填好后由人工核对/点击。
+#
+# 注意出发地/到达地是「联想选择框」：站点代码存在隐藏字段里，
+# 只写可见文本页面会校验报错，因此使用 fill_mode: autocomplete
+# （写值触发联想 → 在候选列表中点选 → 页面写入隐藏代码）。
+#
+# 想验证更多字段：工具栏「+ 新建品种」→ URL 填本页地址 → 第 4 步可看到
+# 扫描出的全部 42 个输入框。
+
+name: 在线验证_12306余票查询
+description: 用真实国内网页（12306 余票查询）验证定位与自动填表
+
+target_url: https://kyfw.12306.cn/otn/leftTicket/init
+
+field_mapping:
+  - property: 出发地
+    locator: 'input[name="leftTicketDTO.from_station_name"]'
+    fill_mode: autocomplete   # 联想选择框：从候选中点选，写入隐藏站点代码
+    required: true
+    verify_after_fill: true
+
+  - property: 到达地
+    locator: 'input[name="leftTicketDTO.to_station_name"]'
+    fill_mode: autocomplete
+    required: true
+    verify_after_fill: true
+
+  - property: 出发日期
+    locator: 'input[name="leftTicketDTO.train_date"]'
+    required: true
+    verify_after_fill: true
+
+submit_button: '#query_ticket'
+verify_delay_ms: 800

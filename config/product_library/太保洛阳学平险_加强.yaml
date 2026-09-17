@@ -1,0 +1,34 @@
+# 太保洛阳学平险（加强版）—— 测试示例品种
+
+name: 太保洛阳学平险_加强
+description: 太保洛阳学平险投保录入（加强版，含更多字段）
+target_url: https://dwx.cpic.com.cn/cxNew/dwx/mobilemsbv2/
+
+field_mapping:
+  - property: 学生姓名
+    locator: 'input[name="xm"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 学生身份证号
+    locator: 'input[name="sfzh"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 监护人姓名
+    locator: 'input[name="jhrmc"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 监护人电话
+    locator: 'input[name="lxdh"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 保险员姓名
+    locator: 'input[name="bxyxm"]'
+    required: true
+    verify_after_fill: true
+
+submit_button: 'button[type="submit"]'
+verify_delay_ms: 500

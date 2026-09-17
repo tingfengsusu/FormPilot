@@ -1,0 +1,41 @@
+# 本地测试品种 —— 指向 tests/mock_form.html，用于 Playwright 真实填表演示
+# 字段 locator 与 基础版 一致，仅 target_url 换成本地 mock 页面
+
+name: 学平险_本地Mock测试
+description: 本地 mock 表单填表测试（需要先安装 playwright + chromium）
+
+target_url: file:///D:/Code/FormPilot/tests/mock_form.html
+
+field_mapping:
+  - property: 学生姓名
+    locator: 'input[name="xm"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 学生身份证号
+    locator: 'input[name="sfzh"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 监护人电话
+    locator: 'input[name="lxdh"]'
+    required: true
+    verify_after_fill: true
+
+  - property: 保险方案
+    locator: 'select[name="baoxian"]'
+    rule: recommend_by_grade
+    required: true
+
+  - property: 监护人姓名
+    locator: 'input[name="jhrmc"]'
+    required: false
+    verify_after_fill: true
+
+  - property: 保险员姓名
+    locator: 'input[name="bxyxm"]'
+    required: false
+    verify_after_fill: true
+
+submit_button: 'button[type="submit"]'
+verify_delay_ms: 500
