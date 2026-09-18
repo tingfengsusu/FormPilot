@@ -63,124 +63,149 @@ class FormFiller:
 
         必需字段缺失时不抛异常，而是记录 missing 后跳过；
         填表结束后保持浏览器打开一段时间，等用户核对提交。
+
+        单条交互式录入用本方法；**批量录入**（batch/runner.py）自己持有
+        浏览器会话，直接复用 :meth:`open_form` + :meth:`fill_on_page`。
         """
         from playwright.sync_api import sync_playwright
-        from verifier.checker import Checker
 
-        report: List[Dict[str, Any]] = []
+        self._last_report = []
+        self._last_issues = []
+        filled = False
 
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=headless)
                 page = create_context(browser, getattr(self.product, "context", None),
                                       target_url=self.product.target_url).new_page()
-                # 等待策略：domcontentloaded + 宽容 load + 短暂稳定期。
-                # 不用 networkidle ——带广告/统计脚本的页面永远不会空闲。
-                page.goto(self.product.target_url,
-                          wait_until="domcontentloaded", timeout=30000)
-                try:
-                    page.wait_for_load_state("load", timeout=15000)
-                except Exception:
-                    pass
-                # 等待表单渲染：轮询直到出现输入框（最多约 8 秒）——
-                # SPA 页面（如实测的太保投保页）渲染表单需要数秒
-                for _ in range(16):
-                    if page.evaluate(
-                            "() => document.querySelectorAll('input,select,textarea').length") > 0:
-                        break
-                    page.wait_for_timeout(500)
-                page.wait_for_timeout(800)
-
-                # 逐字段填写
-                for mapping in self.product.field_mapping:
-                    value, rule_note = self._resolve_value(mapping)
-
-                    # 点击型字段（如方案卡片）：不需要属性值，点中即完成
-                    if mapping.fill_mode == "click":
-                        try:
-                            self._fill_field(page, mapping.locator, "", fill_mode="click")
-                            report.append({
-                                "property": mapping.property,
-                                "locator": mapping.locator,
-                                "status": "filled",
-                                "value": "(点击选择)",
-                                "message": "已点击选择",
-                            })
-                        except Exception as e:  # noqa: BLE001
-                            report.append({
-                                "property": mapping.property,
-                                "locator": mapping.locator,
-                                "status": "error",
-                                "value": None,
-                                "message": f"点击失败: {e}",
-                            })
-                        continue
-
-                    if value is None or str(value).strip() == "":
-                        if mapping.required:
-                            report.append({
-                                "property": mapping.property,
-                                "locator": mapping.locator,
-                                "status": "missing",
-                                "value": None,
-                                "message": f"必填属性 {mapping.property} 为空",
-                            })
-                        continue
-                    try:
-                        self._fill_field(page, mapping.locator, str(value),
-                                         fill_mode=mapping.fill_mode)
-                        entry = {
-                            "property": mapping.property,
-                            "locator": mapping.locator,
-                            "status": "filled",
-                            "value": str(value),
-                        }
-                        if rule_note:
-                            entry["message"] = rule_note
-                        report.append(entry)
-                    except Exception as e:
-                        report.append({
-                            "property": mapping.property,
-                            "locator": mapping.locator,
-                            "status": "error",
-                            "value": str(value),
-                            "message": f"填充失败: {e}",
-                        })
-
-                # 回读校验
-                time.sleep(self.product.verify_delay_ms / 1000.0)
-                issues = Checker().verify(page, self.product, self.pool)
-
-                # 每项补充校验状态
-                issue_map = {i["property"]: i for i in issues}
-                for r in report:
-                    if r["property"] in issue_map:
-                        r["status"] = "mismatch"
-                        r["message"] = (
-                            f"回读不一致: 期望 {issue_map[r['property']]['expected']} "
-                            f"实际 {issue_map[r['property']]['actual']}"
-                        )
-
-                self._last_report = report
-                self._last_issues = issues
+                self.open_form(page)
+                report = self.fill_on_page(page)
+                filled = True
 
                 # 保持浏览器打开，等用户核对后手动提交
                 self._hold_browser(page, browser)
 
-            return self._last_report
+            return report
 
         except Exception as e:
             # 浏览器启动或页面加载失败：记录错误，不崩溃
-            report.append({
-                "property": "(浏览器)",
-                "locator": self.product.target_url,
-                "status": "error",
-                "value": None,
-                "message": f"浏览器操作失败: {e}",
-            })
-            self._last_report = report
-            self._last_issues = []
+            report = list(self._last_report)
+            if not filled:
+                report.append({
+                    "property": "(浏览器)",
+                    "locator": self.product.target_url,
+                    "status": "error",
+                    "value": None,
+                    "message": f"浏览器操作失败: {e}",
+                })
+                self._last_report = report
+                self._last_issues = []
             return report
+
+    # ------------------------------------------------------------------
+    # 页面级操作（批量录入复用：一个浏览器会话填多条）
+    # ------------------------------------------------------------------
+    def open_form(self, page: Any) -> None:
+        """打开目标页面并等待表单渲染。
+
+        等待策略：domcontentloaded + 宽容 load + 轮询直到出现输入框。
+        不用 networkidle ——带广告/统计脚本的页面永远不会空闲；
+        固定等待对 SPA 不够（实测太保投保页需 3~5 秒才渲染出表单）。
+        """
+        page.goto(self.product.target_url,
+                  wait_until="domcontentloaded", timeout=30000)
+        try:
+            page.wait_for_load_state("load", timeout=15000)
+        except Exception:
+            pass
+        for _ in range(16):
+            if page.evaluate(
+                    "() => document.querySelectorAll('input,select,textarea').length") > 0:
+                break
+            page.wait_for_timeout(500)
+        page.wait_for_timeout(800)
+
+    def fill_on_page(self, page: Any) -> List[Dict[str, Any]]:
+        """在**已打开**的页面上逐字段填写 + 回读校验，返回填充报告。
+
+        调用方负责打开页面（:meth:`open_form`）与开关浏览器。
+        """
+        from verifier.checker import Checker
+
+        report: List[Dict[str, Any]] = []
+
+        for mapping in self.product.field_mapping:
+            value, rule_note = self._resolve_value(mapping)
+
+            # 点击型字段（如方案卡片）：不需要属性值，点中即完成
+            if mapping.fill_mode == "click":
+                try:
+                    self._fill_field(page, mapping.locator, "", fill_mode="click")
+                    report.append({
+                        "property": mapping.property,
+                        "locator": mapping.locator,
+                        "status": "filled",
+                        "value": "(点击选择)",
+                        "message": "已点击选择",
+                    })
+                except Exception as e:  # noqa: BLE001
+                    report.append({
+                        "property": mapping.property,
+                        "locator": mapping.locator,
+                        "status": "error",
+                        "value": None,
+                        "message": f"点击失败: {e}",
+                    })
+                continue
+
+            if value is None or str(value).strip() == "":
+                if mapping.required:
+                    report.append({
+                        "property": mapping.property,
+                        "locator": mapping.locator,
+                        "status": "missing",
+                        "value": None,
+                        "message": f"必填属性 {mapping.property} 为空",
+                    })
+                continue
+            try:
+                self._fill_field(page, mapping.locator, str(value),
+                                 fill_mode=mapping.fill_mode)
+                entry = {
+                    "property": mapping.property,
+                    "locator": mapping.locator,
+                    "status": "filled",
+                    "value": str(value),
+                }
+                if rule_note:
+                    entry["message"] = rule_note
+                report.append(entry)
+            except Exception as e:
+                report.append({
+                    "property": mapping.property,
+                    "locator": mapping.locator,
+                    "status": "error",
+                    "value": str(value),
+                    "message": f"填充失败: {e}",
+                })
+
+        # 回读校验
+        time.sleep(self.product.verify_delay_ms / 1000.0)
+        issues = Checker().verify(page, self.product, self.pool)
+
+        # 每项补充校验状态
+        issue_map = {i["property"]: i for i in issues}
+        for r in report:
+            if r["property"] in issue_map:
+                r["status"] = "mismatch"
+                r["message"] = (
+                    f"回读不一致: 期望 {issue_map[r['property']]['expected']} "
+                    f"实际 {issue_map[r['property']]['actual']}"
+                )
+
+        self._last_report = report
+        self._last_issues = issues
+        return report
 
     @staticmethod
     def _fill_field(page: Any, locator: str, value: str,
@@ -198,8 +223,11 @@ class FormFiller:
               在可见候选（div[id^=citem_]）中匹配并点击 → 由页面写入隐藏字段。
           click：点击型选择（如投保页的方案卡片/标签页）。不需要属性值，
               直接点击 locator 指向的元素完成选择（配合 verify_after_fill: false）。
+          select：下拉选择（学校/年级/班级）。自动区分**原生 <select>** 与
+              **自定义组件**（antd/Element 等 div 模拟的下拉），选项必须
+              精确命中，匹配不上**抛错不猜**（见 page/dropdown.py）。
 
-        :raises RuntimeError: autocomplete 模式下候选列表中没有匹配项
+        :raises RuntimeError: autocomplete 候选未匹配 / select 选项不存在
         """
         if fill_mode == "autocomplete":
             FormFiller._fill_autocomplete(page, locator, value)
@@ -208,6 +236,11 @@ class FormFiller:
         if fill_mode == "click":
             page.locator(locator).first.click()
             page.wait_for_timeout(300)
+            return
+
+        if fill_mode == "select":
+            from .dropdown import select_value
+            select_value(page, locator, value)
             return
 
         el = page.locator(locator)

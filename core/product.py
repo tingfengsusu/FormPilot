@@ -20,7 +20,12 @@ class FieldMapping:
     required: bool = True              # 是否必填
     verify_after_fill: bool = True     # 填完后是否回读校验
     rule: Optional[str] = None         # 可选规则引擎标识，如 "recommend_by_grade"
-    fill_mode: str = "plain"           # 填写策略：plain=直接填；autocomplete=联想选择
+    # 填写策略：
+    #   plain        直接填（自动区分 input / select）
+    #   autocomplete 联想选择框（12306 站点这类写值触发联想的）
+    #   click        点击型选择（方案卡片/标签页）
+    #   select       下拉选择（学校/年级/班级；兼容原生 select 与自定义组件）
+    fill_mode: str = "plain"
 
     @classmethod
     def from_dict(cls, data: dict) -> "FieldMapping":

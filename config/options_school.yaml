@@ -1,0 +1,17 @@
+# 学校下拉的权威选项（页面探针产出，**不要手改**）
+#
+# 由 tools/probe_options.py 打开投保页面、展开「学校」下拉、导出全部选项文本。
+# 这是字典的**唯一真相**（附录 C.1）：下拉不是文本输入，值必须精确命中选项，
+# 所以先抓选项，再映射台账写法（config/school_aliases.yaml），不是反过来。
+#
+# 探针用法（P-1 前置工序）：
+#   python tools/probe_options.py "太保洛阳学平险_基础" --dry-run   # 先看探测计划
+#   python tools/probe_options.py "太保洛阳学平险_基础"             # 真实抓取并写入
+#
+# 产出前：dictionary.require_probed_options=false 时以别名表目标值为权威
+#         （过渡模式，导入不会全量进「数据异常」，但报告里会提示待探针）
+# 产出后：把 require_probed_options 设为 true 即启用严格模式
+#
+# 注意：该站点有访问频率限制，探测请间隔进行。
+
+options: []

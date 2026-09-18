@@ -85,8 +85,15 @@ def grade_from_birth(birth: Any, today: Optional[date] = None) -> Optional[int]:
 
 def recommend_by_grade(pool: PropertyPool,
                        today: Optional[date] = None) -> Optional[str]:
-    """按年级推荐保险方案档位；年级无法确定时返回 None。"""
-    grade = grade_from_class(pool.get("班级"))
+    """按年级推荐保险方案档位；年级无法确定时返回 None。
+
+    年级来源优先级：显式「年级」属性 → 「班级」解析 → 「出生日期」推算。
+    显式的「年级」属性是批量投保场景新增的（台账里有独立的年级列，
+    如「五年级」，比从班级号或出生日期推算更可靠）。
+    """
+    grade = grade_from_class(pool.get("年级"))
+    if grade is None:
+        grade = grade_from_class(pool.get("班级"))
     if grade is None:
         grade = grade_from_birth(pool.get("出生日期"), today)
     if grade is None:

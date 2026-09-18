@@ -1,0 +1,58 @@
+# 批量投保录入（batch）模块配置
+#
+# 用法：批量投保页 / tools/batch_cli.py 读取本文件；
+#       品种与校验规则可被 config/recipes/<业务>.yaml 覆盖（Recipe 优先）。
+
+storage:
+  db_path: data/batch.db          # SQLite 库（已加入 .gitignore）
+  screenshot_dir: data/screenshots  # 录入后截图目录（每条一张）
+
+# 导入：列名映射与字典
+import:
+  mapping_file: config/import_mapping.yaml
+  # 源数据缺年份时用于补全（附录 A.4：学平险 1 年期，止日期一律按次年解释）
+  ref_year: 2026
+  # 导入时是否逐条校验（关闭则全部落「未确认」，后续手动校验）
+  validate_on_import: true
+
+dictionary:
+  config_dir: config
+  # 归一化时是否剥离「学校/小学/洛阳市」等前后缀噪声（默认关闭：不猜）
+  strip_noise: false
+  # true = 严格模式：匹配结果必须落在**页面探针产出**的选项集合内；
+  #        尚未产出 options_*.yaml 时，全部字典字段会进「数据异常」。
+  # false（默认）= 过渡模式：以别名表的目标值作为权威，并在报告里提示待探针。
+  require_probed_options: false
+
+validate:
+  required: [name, id_card, phone, school, class_name, period_start, period_end]
+  age_range: [5, 20]              # 按保险期间起始日计算的投保年龄区间
+  period_days: [360, 370]         # 保险期间时长（学平险 1 年期，365±5）
+  phone_regex: '^1[3-9]\d{9}$'
+  duplicate_check: true           # 同一身份证号 + 同一保险期间 → 数据异常
+
+execute:
+  # 录入目标品种（config/product_library/ 下的品种名）
+  product: 太保洛阳学平险_基础
+  # 明细字段 → 品种属性名
+  property_map:
+    学生姓名: name
+    学生身份证号: id_card
+    监护人姓名: payer_name       # 缴款人（家长）；留空则用 applicant_name / 当前操作者
+    监护人电话: payer_phone
+    保险方案: plan
+  # 投保人为空时的默认值来源（附录 B.2）
+  default_applicant_name: current_operator
+  current_operator: 李四          # 单用户场景下的「当前操作者」
+  max_retries: 3                  # 失败重试上限（指数退避），超过即「录入失败」
+  retry_backoff_seconds: 3
+  screenshot: true
+  headless: false
+  # 录入节奏：串行 + 每条之间的间隔（不绕过投保系统风控，保持正常人工节奏）
+  interval_seconds: 2
+
+export:
+  output_dir: data/exports
+  # 提效统计口径（用于算出「本批省了多少时间」）
+  manual_minutes_per_record: [3, 5]   # 人工逐字段录入一条的耗时区间（分钟）
+  review_seconds_per_record: 4        # 复核一条的耗时（秒）

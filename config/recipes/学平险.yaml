@@ -1,0 +1,70 @@
+# 业务配方（Recipe）——「一条业务」的完整描述（设计文档第八节）
+#
+# 把「一条业务」抽象成一份 YAML：输入形态 / 校验规则 / 执行方式 / 复核方式 / 状态机。
+# **新增一个业务 = 加一份 YAML + 可能加一个字段映射器，不动主流程。**
+# 这与 FormPilot 现有的「品种」概念一脉相承——只是从「表单填写」泛化成「业务任务」。
+#
+# 同一套结构后面可以承载：
+#   历史批量录入（本设计）  input=Excel         execute=填投保网页   人工卡点=复核+支付
+#   新客户单条录入          input=图片（文件夹）  execute=填投保网页   人工卡点=复核+支付
+#   合同生成                input=指令/表单      execute=填文档模板   人工卡点=发出前
+
+name: 学平险批量投保
+description: 手写台账 → 结构化数据 → 批量录入投保网页 → 人工复核 → 人工支付
+
+# —— 输入：Excel / CSV + 列名映射 + 字典 ——
+input:
+  type: excel                       # excel | csv
+  mapping: config/import_mapping.yaml
+  dictionaries: [school, grade, class_name]
+  ref_year: 2026                    # 源数据缺年份时的解读基准（止日期=次年）
+
+# —— 校验：规则清单（顺序即执行顺序，也是报告里的展示顺序）——
+validate:
+  - required: [name, id_card, phone, school, class_name, period_start, period_end]
+  - id_card_checksum                # GB 11643-1999 校验位（整个方案的地基）
+  - id_card_birthdate               # 出生日期合法性（6/8、0/6 混淆）
+  - id_card_province                # 地区码有效性
+  - age_range: [5, 20]              # 按保险期间起始日算投保年龄
+  - phone_format                    # ^1[3-9]\d{9}$
+  - period_sanity                   # 起 < 止，时长 360~370 天
+  - duplicate_check                 # 同身份证号 + 同保险期间
+  - dictionary                      # 学校/年级/班级必须落在页面下拉选项内
+
+# —— 执行：复用现有录入流程（page/filler.py → verifier/checker.py）——
+execute:
+  target: 投保网页
+  filler: page/filler.py
+  verifier: verifier/checker.py
+  product: 太保洛阳学平险_基础        # 目标品种（config/product_library/*.yaml）
+  property_map:                     # 明细字段 → 品种属性名
+    学生姓名: name
+    学生身份证号: id_card
+    监护人姓名: payer_name
+    监护人电话: payer_phone
+    保险方案: plan
+  screenshot: true                  # 每条录入后截图（复核时不用重看数据）
+  serial: true                      # **串行**执行：投保系统一个会话一个操作
+  max_retries: 3                    # 失败重试上限（指数退避），超过即「录入失败」
+  retry_backoff_seconds: 3
+  interval_seconds: 2               # 条间间隔：保持正常人工节奏，不绕风控
+
+# —— 投保人默认值（附录 B.2）——
+defaults:
+  applicant_name:
+    mode: current_operator          # 留空时取当前操作者
+    required_in_multi_user: true    # 多用户场景下该字段必填
+
+# —— 复核 ——
+review:
+  mode: exception_first             # 优先排队异常项
+  bulk_pass: true                   # 无异常项可批量通过
+  keyboard: [J, K, Enter, Backspace]  # 上下条 / 通过 / 打回
+  target_seconds_per_record: 5      # 目标：每条复核 3-5 秒
+
+# —— 状态机 ——
+states:
+  initial: 未确认
+  flow: [未确认, 已确认, 录入中, 待复核, 已复核, 已支付]
+  terminal: [已支付]
+  error: [录入失败, 数据异常]
