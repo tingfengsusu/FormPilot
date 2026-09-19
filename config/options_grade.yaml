@@ -1,7 +1,82 @@
-# 年级下拉的权威选项（页面探针产出，**不要手改**）
+# 年级的权威选项（页面探针产出，**不要手改**）
 #
-# 由 tools/probe_options.py 打开投保页面、展开「年级」下拉、导出全部选项文本。
-# 实测源数据里年级有 18 种写法（含「大/小/中/十一」等残缺值），
-# 归一化后的结果必须落在这里的选项集合内，否则进「数据异常」。
+# 由 tools/probe_options.py 打开投保页面、抓取该字段后写下。
+# 字典的权威来源（设计文档附录 C.1）：先抓页面，再映射台账写法
+# （config/grade_aliases.yaml），不是反过来。
+#
+# 注意：本字段的选项随上级下拉（如「学生类别」）变化，
+#      probe.by_selector 记录了各分组下的选项，options 是全集。
+# 匹配规则（dictionary.kinds.grade: choice）：
+#   值必须精确命中下面的选项文本；别名表目标值也必须落在集合内，
+#   否则进「数据异常」——不猜、不填相近值。
+#
+# 抓取结果（2026-09-19 01:22:41）：
+#   品种：太保洛阳学平险_基础
+#   控件类型：自定义组件   选项数：12
+#   locator：div > span > div:nth-of-type(4) > div:nth-of-type(10) > div > div > div:nth-of-type(2) > div
+#
+# 程序只读下面的 options 列表；probe 段供排查，可忽略。
+# 注意：重新探测会覆盖本文件。
 
-options: []
+probe:
+  product: 太保洛阳学平险_基础
+  url: https://dwx.cpic.com.cn/cxNew/dwx/mobilemsbv2/?mId=YOUR_ACTIVITY_ID&vCode=YOUR_ACTIVITY_CODE
+  widget: custom
+  locator: div > span > div:nth-of-type(4) > div:nth-of-type(10) > div > div > div:nth-of-type(2) > div
+  source: auto
+  count: 12
+  probed_at: '2026-09-19 01:22:41'
+  note: 选项随上级下拉变化，by_selector 为各分组下的选项
+  by_selector:
+    大中专学校学生:
+    - 1年级
+    - 2年级
+    - 3年级
+    - 4年级
+    - 5年级
+    - 6年级
+    - 初中一年级
+    - 初中二年级
+    - 初中三年级
+    - 高中一年级
+    - 高中二年级
+    - 高中三年级
+    中学生:
+    - 1年级
+    - 2年级
+    - 3年级
+    - 4年级
+    - 5年级
+    - 6年级
+    - 初中一年级
+    - 初中二年级
+    - 初中三年级
+    - 高中一年级
+    - 高中二年级
+    - 高中三年级
+    小学生:
+    - 1年级
+    - 2年级
+    - 3年级
+    - 4年级
+    - 5年级
+    - 6年级
+    - 初中一年级
+    - 初中二年级
+    - 初中三年级
+    - 高中一年级
+    - 高中二年级
+    - 高中三年级
+options:
+- 1年级
+- 2年级
+- 3年级
+- 4年级
+- 5年级
+- 6年级
+- 初中一年级
+- 初中二年级
+- 初中三年级
+- 高中一年级
+- 高中二年级
+- 高中三年级

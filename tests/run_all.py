@@ -24,6 +24,7 @@ PROJECT_ROOT = os.path.dirname(TESTS_DIR)
 #: GUI 烟雾测试（不在 tests/ 下，作为补充项一起跑）
 EXTRA_CHECKS = [
     ("tools/smoke_property_ui.py", "GUI 烟雾"),
+    ("tools/smoke_batch_ui.py", "批量页烟雾"),
 ]
 
 _CASE_RE = re.compile(r"^def test_", re.M)

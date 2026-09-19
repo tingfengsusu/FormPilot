@@ -159,6 +159,8 @@ class Applicant:
     school: str = ""
     grade: str = ""
     class_name: str = ""
+    #: 页面上要选的「学生类别」（由原始年级写法推导，见 batch.yaml 的 student_level）
+    student_level: str = ""
 
     period_start: str = ""
     period_end: str = ""
@@ -174,6 +176,10 @@ class Applicant:
 
     #: 校验结果（来自 validation 表，非 applicant 表字段）
     validations: List["ValidationResult"] = field(default_factory=list)
+
+    #: 导入时对字段做过的调整说明（如起期按页面约束平移）。
+    #: 不落 applicant 表，只写进 validation 表供人工复核，原始台账值仍以源文件为准。
+    adjust_notes: List[str] = field(default_factory=list)
 
     @property
     def display_id_card(self) -> str:
@@ -204,6 +210,8 @@ class Applicant:
             school=row["school"] or "",
             grade=(row["grade"] or "") if "grade" in keys else "",
             class_name=row["class_name"] or "",
+            student_level=(row["student_level"] or "")
+            if "student_level" in keys else "",
             period_start=row["period_start"] or "",
             period_end=row["period_end"] or "",
             status=row["status"],

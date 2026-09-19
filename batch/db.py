@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS applicant (
   school        TEXT NOT NULL,
   grade         TEXT DEFAULT '',
   class_name    TEXT NOT NULL,
+  student_level TEXT DEFAULT '',
   period_start  TEXT NOT NULL,
   period_end    TEXT NOT NULL,
   status        TEXT NOT NULL,
@@ -91,6 +92,7 @@ _MIGRATIONS: Dict[str, Dict[str, str]] = {
         "payer_phone": "TEXT DEFAULT ''",
         "applicant_name": "TEXT DEFAULT ''",
         "grade": "TEXT DEFAULT ''",
+        "student_level": "TEXT DEFAULT ''",
         "source_image": "TEXT DEFAULT ''",
     },
 }
@@ -102,7 +104,7 @@ _SENSITIVE_FIELDS = ("id_card", "payer_id_card")
 _WRITABLE_FIELDS = (
     "name", "id_card", "phone",
     "payer_name", "payer_id_card", "payer_phone", "applicant_name",
-    "school", "grade", "class_name",
+    "school", "grade", "class_name", "student_level",
     "period_start", "period_end",
     "status", "fail_reason", "screenshot", "source_image", "retry_count",
 )
@@ -206,6 +208,7 @@ class BatchDB:
             "school": applicant.school,
             "grade": applicant.grade,
             "class_name": applicant.class_name,
+            "student_level": applicant.student_level,
             "period_start": applicant.period_start,
             "period_end": applicant.period_end,
             "status": applicant.status,
@@ -282,14 +285,22 @@ class BatchDB:
             self._conn.commit()
 
     def clear_batch_sensitive(self, batch_id: int, operator: str = "system") -> int:
-        """对整批执行脱敏，返回处理条数。"""
-        rows = self._query(
-            "SELECT id FROM applicant WHERE batch_id = ? AND id_card NOT LIKE '%-%-%'",
-            (batch_id,))
-        ids = [r["id"] for r in rows]
-        for applicant_id in ids:
-            self.clear_sensitive(applicant_id, operator=operator)
-        return len(ids)
+        """对整批执行脱敏，返回处理条数（已脱敏的跳过）。
+
+        注意：id_card 在库里是 Fernet 密文（URL-safe base64，可能含 ``-``），
+        **不能**用 SQL LIKE 在密文上判断是否已脱敏——必须解密后再判断，
+        否则会随机漏处理（密文里恰好含 ``-`` 时）。
+        """
+        rows = self._query("SELECT id FROM applicant WHERE batch_id = ?", (batch_id,))
+        count = 0
+        for row in rows:
+            applicant = self.get_applicant(row["id"], with_validations=False)
+            if applicant is None or (crypto.is_masked(applicant.id_card)
+                                     and crypto.is_masked(applicant.payer_id_card)):
+                continue
+            self.clear_sensitive(row["id"], operator=operator)
+            count += 1
+        return count
 
     # ------------------------------------------------------------------
     # 明细：状态流转

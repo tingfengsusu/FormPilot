@@ -1,6 +1,6 @@
 # 批量投保录入（batch）模块配置
 #
-# 用法：批量投保页 / tools/batch_cli.py 读取本文件；
+# 用法：batch/ 模块（批量投保页、tools/ 下的脚本）读取本文件；
 #       品种与校验规则可被 config/recipes/<业务>.yaml 覆盖（Recipe 优先）。
 
 storage:
@@ -14,15 +14,33 @@ import:
   ref_year: 2026
   # 导入时是否逐条校验（关闭则全部落「未确认」，后续手动校验）
   validate_on_import: true
+  # 起期最早允许的日期（实测：投保页「保险期间·起」是日期选择器，只能选今天及之后，
+  # 台账里的 8 月分期填不进去）。取值：
+  #   today      = 起期早于今天的，整体平移到今天（保持原时长），逐条留痕 + 报告提示确认
+  #   YYYY-MM-DD = 指定最早日期
+  #   off        = 不调整（起期早于今天的行需人工处理）
+  # 注意：起保日 = 录入当天的口径，录入时（P1 runner）会再按当天重新取平，避免跨天失效。
+  period_start_floor: today
 
 dictionary:
   config_dir: config
   # 归一化时是否剥离「学校/小学/洛阳市」等前后缀噪声（默认关闭：不猜）
   strip_noise: false
-  # true = 严格模式：匹配结果必须落在**页面探针产出**的选项集合内；
-  #        尚未产出 options_*.yaml 时，全部字典字段会进「数据异常」。
-  # false（默认）= 过渡模式：以别名表的目标值作为权威，并在报告里提示待探针。
-  require_probed_options: false
+  # 字段控件类型（**真实页面实测**，决定权威值从哪来）：
+  #   choice = 下拉选择 → 权威值必须是页面选项（options_*.yaml，探针产出）
+  #   text   = 文本输入 → 页面上没有选项集合，权威值 = 人工确认的规范名
+  #            （*_aliases.yaml 的目标值；未显式映射的写法照样进「数据异常」）
+  # 实测（2026-09-19）：学校名称是文本输入（placeholder「请录入学校名称」）；
+  #                     年级 / 班级是下拉，年级的选项随「学生类别」变化。
+  kinds:
+    school: text
+    grade: choice
+    class_name: choice
+  # 没有「过渡模式」：下拉字段的选项未探针产出时，别名表的目标值不会被当作
+  # 权威值使用，所有下拉字典字段一律判「数据异常」（宁可看到未命中，
+  # 也不要假的「导入成功」）。
+  # 抓选项：python tools/probe_options.py "<品种名>" --qr <二维码图片>
+  # 核别名：python tools/probe_options.py --check
 
 validate:
   required: [name, id_card, phone, school, class_name, period_start, period_end]
@@ -31,16 +49,51 @@ validate:
   phone_regex: '^1[3-9]\d{9}$'
   duplicate_check: true           # 同一身份证号 + 同一保险期间 → 数据异常
 
+# 学生类别：录入时页面上要先选的字段（实测：年级选项不随它变化，但它必填，
+# 且影响承保口径 —— 大学生要选「大中专学校学生」再选 1/2/3）。
+# 由台账里的**原始年级写法**按顺序前缀匹配推导；推导不出来 → 数据异常
+# （不允许默默用页面默认值，那会把小学生当成大中专学生投保）。
+student_level:
+  rules:
+    - level: 大中专学校学生
+      prefixes: [大, 中专, 大专, 本科]
+    - level: 中学生
+      prefixes: [高, 初, 中, 七, 八, 九]
+    - level: 小学生
+      prefixes: [一, 二, 三, 四, 五, 六, 小, 1, 2, 3, 4, 5, 6]
+  require: true
+
 execute:
   # 录入目标品种（config/product_library/ 下的品种名）
   product: 太保洛阳学平险_基础
-  # 明细字段 → 品种属性名
+  # 明细字段 → 品种属性名（录入时按这个把数据喂进属性池）
   property_map:
     学生姓名: name
     学生身份证号: id_card
     监护人姓名: payer_name       # 缴款人（家长）；留空则用 applicant_name / 当前操作者
     监护人电话: payer_phone
     保险方案: plan
+    学校名称: school
+    年级: grade
+    班级: class_name
+    保险期间起: period_start
+    保险期间止: period_end
+    # 「学生类别」比较特殊：由年级推导（见下面的 student_level），不直接来自某一列
+  # 录入前校验：品种 yaml 必须覆盖这些属性，缺一个就**不开始录入**
+  #（避免填了半张表还置「待复核」）。字段 locator 可用 tools/probe_options.py 探测。
+  required_properties:
+    - 学生姓名
+    - 学生身份证号
+    - 监护人姓名
+    - 监护人电话
+    - 学校名称
+    - 学生类别
+    - 年级
+    - 班级
+    - 保险期间起
+    - 保险期间止
+  # 是否自动点提交：默认 false（提交与支付都是人工卡点，见设计文档第七节）
+  submit: false
   # 投保人为空时的默认值来源（附录 B.2）
   default_applicant_name: current_operator
   current_operator: 李四          # 单用户场景下的「当前操作者」

@@ -25,6 +25,7 @@ class FieldMapping:
     #   autocomplete 联想选择框（12306 站点这类写值触发联想的）
     #   click        点击型选择（方案卡片/标签页）
     #   select       下拉选择（学校/年级/班级；兼容原生 select 与自定义组件）
+    #   date         日期选择器（保险期限；原生输入框或滚轮/日历面板）
     fill_mode: str = "plain"
 
     @classmethod

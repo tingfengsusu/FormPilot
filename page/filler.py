@@ -226,8 +226,12 @@ class FormFiller:
           select：下拉选择（学校/年级/班级）。自动区分**原生 <select>** 与
               **自定义组件**（antd/Element 等 div 模拟的下拉），选项必须
               精确命中，匹配不上**抛错不猜**（见 page/dropdown.py）。
+          date：日期选择器（保险期限 起/止）。原生输入框直接填；
+              Vant/antd 的滚轮/日历面板则点开→选年月日→确认，再回读校验
+              （见 page/date_picker.py）。
 
-        :raises RuntimeError: autocomplete 候选未匹配 / select 选项不存在
+        :raises RuntimeError: autocomplete 候选未匹配 / select 选项不存在 /
+            date 选择器结构不识别或回读不一致
         """
         if fill_mode == "autocomplete":
             FormFiller._fill_autocomplete(page, locator, value)
@@ -241,6 +245,11 @@ class FormFiller:
         if fill_mode == "select":
             from .dropdown import select_value
             select_value(page, locator, value)
+            return
+
+        if fill_mode == "date":
+            from .date_picker import fill_date
+            fill_date(page, locator, value)
             return
 
         el = page.locator(locator)

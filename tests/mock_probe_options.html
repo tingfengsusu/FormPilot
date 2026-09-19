@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>探针验证页（Mock，按真实页面实测结构）</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  /* 面板绝对定位（真实页面的常见做法）：不遮挡触发框本身 */
+  .el-select { position: relative; cursor: pointer; border: 1px solid #999;
+               padding: 6px; width: 260px; }
+  .el-select ul { list-style: none; padding-left: 0; margin: 0; display: none;
+                  position: absolute; left: 0; top: 100%; z-index: 10;
+                  width: 100%; background: #fff; border: 1px solid #ccc; }
+  .el-select li { padding: 4px 6px; }
+  .el-select li:hover { background: #eef; }
+</style>
+</head>
+<body>
+  <h3>投保信息（探针验证用 Mock 页：按真实页面实测结构搭的）</h3>
+
+  <!-- 实测：学校名称是文本输入，没有下拉 -->
+  <label>学校名称</label>
+  <input id="xx" placeholder="请录入学校名称">
+
+  <p></p>
+  <!-- 实测：学生类别是下拉（自定义组件），年级/班级的选项随它变化 -->
+  <label>学生类别</label>
+  <div class="el-select" id="levelBox">
+    <input placeholder="请选择学生类别" readonly>
+    <ul role="listbox" style="display:none">
+      <li role="option">小学生</li>
+      <li role="option">中学生</li>
+      <li role="option">大中专学校学生</li>
+    </ul>
+  </div>
+
+  <p></p>
+  <label>年级</label>
+  <div class="el-select" id="gradeBox">
+    <input placeholder="请选择年级" readonly>
+    <ul role="listbox" style="display:none"></ul>
+  </div>
+
+  <p></p>
+  <label>班级</label>
+  <select id="bj"></select>
+
+  <p></p>
+  <label>缴款人姓名</label>
+  <input placeholder="请录入姓名">
+
+<script>
+// 真实页面的联动关系（实测）：选学生类别 → 年级/班级的选项跟着变
+const GRADES = {
+  "小学生": ["1年级", "2年级", "3年级", "4年级", "5年级", "6年级"],
+  "中学生": ["初中一年级", "初中二年级", "初中三年级",
+             "高中一年级", "高中二年级", "高中三年级"],
+  "大中专学校学生": ["中专一年级", "中专二年级", "大专一年级", "大专二年级"],
+};
+const CLASSES = {
+  "小学生": ["1班", "2班", "3班", "4班", "5班", "6班"],
+  "中学生": ["1班", "2班", "3班", "4班", "5班", "6班", "7班"],
+  "大中专学校学生": ["1班", "2班", "3班"],
+};
+
+function fillGradeOptions(level) {
+  const ul = document.querySelector('#gradeBox ul');
+  ul.innerHTML = '';
+  (GRADES[level] || []).forEach(function (name) {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'option');
+    li.textContent = name;
+    ul.appendChild(li);
+  });
+}
+
+function fillClassOptions(level) {
+  const sel = document.querySelector('#bj');
+  sel.innerHTML = '';
+  (CLASSES[level] || []).forEach(function (name) {
+    const opt = document.createElement('option');
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+}
+
+// 学生类别：点开 → 选项可见；选中 → 联动刷新年级/班级
+document.querySelector('#levelBox').addEventListener('click', function (e) {
+  const list = document.querySelector('#levelBox ul');
+  list.style.display = 'block';
+  if (e.target && e.target.tagName === 'LI') {
+    const level = e.target.textContent.trim();
+    list.style.display = 'none';
+    fillGradeOptions(level);
+    fillClassOptions(level);
+  }
+});
+
+document.querySelector('#gradeBox').addEventListener('click', function () {
+  document.querySelector('#gradeBox ul').style.display = 'block';
+});
+
+// 真实组件的通用行为：Escape / 点空白处 收起面板
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.el-select ul').forEach(function (ul) {
+      ul.style.display = 'none';
+    });
+  }
+});
+document.addEventListener('click', function (e) {
+  if (!e.target.closest || !e.target.closest('.el-select')) {
+    document.querySelectorAll('.el-select ul').forEach(function (ul) {
+      ul.style.display = 'none';
+    });
+  }
+});
+
+// 初始状态：和真实页面一样，没选学生类别时年级/班级是空的
+fillGradeOptions("");
+fillClassOptions("");
+</script>
+</body>
+</html>

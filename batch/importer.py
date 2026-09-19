@@ -19,9 +19,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .db import BatchDB
 from .dictionaries import MATCH_AMBIGUOUS, MATCH_UNMATCHED, DictionarySet
-from .models import STATUS_DATA_ERROR, STATUS_PENDING, Applicant, Batch
+from .models import (STATUS_DATA_ERROR, STATUS_PENDING, Applicant, Batch,
+                     ValidationResult)
 from .recipe import Recipe
-from .validator import Validator, normalize_phone, normalize_text, resolve_period
+from .validator import (Validator, apply_period_floor, derive_student_level,
+                        normalize_phone, normalize_text, resolve_period,
+                        resolve_period_floor)
 
 
 @dataclass
@@ -42,6 +45,12 @@ class ImportReport:
     row_errors: List[Tuple[int, str]] = field(default_factory=list)
     #: 字典权威值是否已由页面探针产出
     options_ready: bool = True
+    #: 尚未探针产出选项的字典名（school / grade / class_name）
+    missing_options: List[str] = field(default_factory=list)
+    #: 起期被按「页面只允许今天及之后」调整的条数
+    period_adjusted: int = 0
+    #: 调整样例（供人工确认）：["学生甲：2026-08-22 → 2026-09-19（止期同步顺延）"]
+    period_adjust_samples: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
     @property
@@ -59,11 +68,24 @@ class ImportReport:
             lines += [f"  · 第 {r} 行：{msg}" for r, msg in self.row_errors[:10]]
         for key, values in self.unmatched.items():
             if values:
-                lines.append(f"字典未命中（{key}）：{'、'.join(values[:10])}"
+                lines.append(f"字典未命中（{key}）{len(values)} 种："
+                             f"{'、'.join(values[:10])}"
                              + ("…" if len(values) > 10 else ""))
+        if self.period_adjusted:
+            lines.append(
+                f"⚠ 保险期间起期已调整 {self.period_adjusted} 条"
+                f"（页面只允许今天及之后的起期，台账原起期更早；止期同步顺延、"
+                f"保持原时长）——请人工确认：")
+            lines += [f"  · {sample}" for sample in self.period_adjust_samples[:5]]
+            if self.period_adjusted > len(self.period_adjust_samples[:5]):
+                lines.append(f"  · …另有 {self.period_adjusted - 5} 条，"
+                             f"逐条明细见 validation 表（rule=period_adjusted）")
         if not self.options_ready:
-            lines.append("提示：页面下拉选项尚未探针产出，当前以别名表为权威"
-                         "（先跑 tools/probe_options.py 再导入更稳妥）")
+            lines.append(
+                f"⚠ 页面下拉选项尚未探针产出（{'、'.join(self.missing_options) or '全部'}）："
+                f"无法确认这些值能否被选中，已全部计入「数据异常」"
+                f"——请先运行 tools/probe_options.py 抓取选项后重新导入"
+                f"（这是刻意的严格行为：不猜、不放行，避免到录入阶段才大面积失败）")
         return "\n".join(lines)
 
 
@@ -226,6 +248,9 @@ class Importer:
         self.mapper = ColumnMapper(mapping_cfg if isinstance(mapping_cfg, dict) else {})
         self.validate_on_import = bool(
             (self.recipe.input_config.get("validate_on_import", True)))
+        #: 起期最早允许值（实测：投保页「保险期间·起」只能选今天及之后）
+        self.period_start_floor = resolve_period_floor(
+            self.recipe.input_config.get("period_start_floor", ""))
 
     # ------------------------------------------------------------------
     def import_file(self, path: str, batch_name: str = "",
@@ -238,7 +263,8 @@ class Importer:
     def import_rows(self, rows: Sequence[dict], headers: Sequence[str],
                     batch_name: str = "", source_file: str = "") -> ImportReport:
         """导入内存中的行（测试与预览用）。"""
-        report = ImportReport(options_ready=self.dictionaries.options_ready)
+        report = ImportReport(options_ready=self.dictionaries.options_ready,
+                              missing_options=self.dictionaries.missing_options())
         column_map = self.mapper.resolve(headers)
         missing = [c for c in ("name", "id_card") if c not in column_map]
         if missing:
@@ -295,15 +321,26 @@ class Importer:
         if not period_end and get("period_end"):
             period_end = _to_iso(get("period_end"), self.recipe.ref_year)
 
+        adjust_notes: List[str] = []
+        if period_start and period_end and self.period_start_floor is not None:
+            period_start, period_end, note = self._apply_period_floor(
+                period_start, period_end)
+            if note:
+                adjust_notes.append(note)
+
         school = self._canonical("school", get("school"))
-        grade = self._canonical("grade", get("grade"))
+        raw_grade = get("grade")
+        grade = self._canonical("grade", raw_grade)
         class_name = self._canonical("class_name", get("class_name"))
+        # 学生类别：由**原始**年级写法推导（归一化后的「1年级」分不出小学一年级还是大一）
+        student_level = derive_student_level(raw_grade,
+                                             self.recipe.student_level_rules)
 
         applicant_name = get("applicant_name")
         if not applicant_name:
             applicant_name = self._default_applicant_name()
 
-        return Applicant(
+        applicant = Applicant(
             batch_id=0,
             name=get("name"),
             id_card=get("id_card").upper(),
@@ -315,11 +352,28 @@ class Importer:
             school=school,
             grade=grade,
             class_name=class_name,
+            student_level=student_level,
             period_start=period_start,
             period_end=period_end,
             status=STATUS_PENDING,
             source_image=get("source_image"),
         )
+        applicant.adjust_notes.extend(adjust_notes)
+        return applicant
+
+    def _apply_period_floor(self, period_start: str,
+                            period_end: str) -> Tuple[str, str, str]:
+        """起期早于页面允许的最早日期时整体平移（保持原时长），返回调整说明。
+
+        策略与留痕见 :func:`batch.validator.apply_period_floor`：
+        起期取今天、止期同步顺延，并逐条提醒人工确认——**不改源文件**。
+        """
+        start, end, note = apply_period_floor(
+            period_start, period_end, self.period_start_floor)
+        if note:
+            note += (f"——台账原起期早于页面允许的最早日期 "
+                     f"{self.period_start_floor.isoformat()}，请人工确认起保日")
+        return start, end, note
 
     def _canonical(self, key: str, value: str) -> str:
         """字典归一化：命中则用权威值；未命中保留原值（校验时判异常）。"""
@@ -340,6 +394,17 @@ class Importer:
 
         for applicant in applicants:
             vreport = self.validator.validate(applicant, duplicate_ids=duplicates)
+            # 起期调整留痕（不改变通过与否，只提醒人工确认；见 batch.yaml）
+            if applicant.adjust_notes:
+                report.period_adjusted += 1
+                if len(report.period_adjust_samples) < 5:
+                    short = applicant.adjust_notes[0].split("——")[0]
+                    report.period_adjust_samples.append(
+                        f"{applicant.name or '(未填姓名)'}：{short}")
+                for note in applicant.adjust_notes:
+                    vreport.results.insert(0, ValidationResult(
+                        applicant_id=applicant.id or 0, field="period_start",
+                        rule="period_adjusted", passed=True, detail=note))
             self.db.replace_validations(applicant.id, vreport.results)
 
             for result in vreport.results:

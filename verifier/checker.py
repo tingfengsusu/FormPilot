@@ -24,9 +24,14 @@ class Checker:
 
         :param page: Playwright 的 page 对象（有 input_value(locator) 方法）
 
-        注意 select 元素的特殊性：input_value() 返回的是 <option value="...">
-        的 value 属性，而不是用户看到的选项文本。因此对 select 额外读取
-        选中项的文本，value 与文本任一匹配即视为一致，避免误报。
+        元素类型不同，取值方式也不同（实测踩过：日期选择器/学校框是
+        ``div``/``span``，直接 ``input_value()`` 会抛「Node is not an
+        <input>」）：
+
+        - ``select``：input_value() 返回 option 的 value 而非可见文本，
+          所以额外读选中项文本，任一匹配即通过
+        - ``input`` / ``textarea``：读 ``value``
+        - 其他（div/span 模拟的输入框）：读可见文本
         """
         issues: List[dict] = []
         for mapping in product.field_mapping:
@@ -53,7 +58,11 @@ class Checker:
                             "locator": mapping.locator,
                         })
                     continue
-                page_value = el.input_value()
+                if tag in ("input", "textarea"):
+                    page_value = el.input_value()
+                else:
+                    page_value = el.evaluate(
+                        "e => (e.innerText || e.textContent || '').trim()")
             except Exception as e:
                 # 元素读不到值（可能被隐藏/禁用），记为校验异常
                 issues.append({
@@ -64,7 +73,7 @@ class Checker:
                 })
                 continue
 
-            if page_value != expected_str:
+            if str(page_value or "") != expected_str:
                 issues.append({
                     "property": mapping.property,
                     "expected": expected_str,

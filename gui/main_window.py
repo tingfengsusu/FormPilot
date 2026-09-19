@@ -32,6 +32,8 @@ class MainWindow(QMainWindow):
         toolbar.addAction("📂 载入")
         self.prop_mgmt_action = toolbar.addAction("🏷️ 属性管理")
         self.prop_mgmt_action.setToolTip("创建/编辑属性对象（名称、来源、类型、选项、默认值）")
+        self.batch_action = toolbar.addAction("📋 批量投保")
+        self.batch_action.setToolTip("学平险批量录入：导入台账 → 批量填表 → 逐条复核")
 
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("目标页面 URL...")
@@ -59,20 +61,23 @@ class MainWindow(QMainWindow):
 
         splitter.setSizes([250, 500, 530])
 
-        # 中央 QStackedWidget：页 0 = 三栏工作区，页 1 = 属性管理内部页面
-        # （属性管理是程序内页面切换，不是弹出新窗口）
+        # 中央 QStackedWidget：页 0 = 三栏工作区，页 1 = 属性管理内部页面，
+        # 页 2 = 批量投保页（都是程序内切换，不弹新窗口）
         from .property_manager_page import PropertyManagerWidget
         self.stack = QStackedWidget()
         self.stack.addWidget(splitter)
         self.property_page = PropertyManagerWidget(self.prop_def_library)
         self.property_page.back_requested.connect(self._show_main_page)
         self.stack.addWidget(self.property_page)
+        # 批量投保页**首次打开时才构造**（避免启动阶段就去碰数据库）
+        self.batch_page = None
         self.setCentralWidget(self.stack)
 
     def _show_main_page(self):
-        """从属性管理页返回三栏工作区，并按更新后的属性库重建属性面板。"""
+        """从内部页面返回三栏工作区，并按更新后的属性库重建属性面板。"""
         self.stack.setCurrentIndex(0)
         self.prop_mgmt_action.setText("🏷️ 属性管理")
+        self.batch_action.setText("📋 批量投保")
 
         product = self.page_panel._product
         if product is not None:
@@ -91,6 +96,7 @@ class MainWindow(QMainWindow):
         self.new_action.triggered.connect(self._on_new_product)
         self.product_list.new_btn.clicked.connect(self._on_new_product)
         self.prop_mgmt_action.triggered.connect(self._on_manage_properties)
+        self.batch_action.triggered.connect(self._on_open_batch)
 
     def _on_source_extracted(self, source_name: str, values: dict):
         """拖图识别完成：回填面板后，把「品种属性名」喂入属性池。"""
@@ -179,3 +185,18 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(1)
         self.prop_mgmt_action.setText("⬅ 返回主界面")
         self.statusBar().showMessage("属性管理：编辑后记得点「💾 保存」")
+
+    def _on_open_batch(self):
+        """切换到批量投保页；再次点击返回主界面。"""
+        if self.batch_page is None:
+            from .batch_page import BatchPage
+
+            self.batch_page = BatchPage()
+            self.stack.addWidget(self.batch_page)
+        elif self.stack.currentIndex() == self.stack.indexOf(self.batch_page):
+            self._show_main_page()
+            return
+        self.batch_page.refresh_batches()
+        self.stack.setCurrentWidget(self.batch_page)
+        self.batch_action.setText("⬅ 返回主界面")
+        self.statusBar().showMessage("批量投保：导入台账 → 批量录入 → 逐条复核")

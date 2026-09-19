@@ -128,6 +128,15 @@ def mask_phone(value: str) -> str:
     return f"{text[:3]}****{text[-4:]}"
 
 
+def is_masked(value: str) -> bool:
+    """值是否已脱敏（含打码字符 ``*``）。
+
+    注意：**不能**用 SQL 在密文列上判断——Fernet 密文是 URL-safe base64，
+    本身就可能含 ``-``/``_``，必须解密后再判断。
+    """
+    return "*" in str(value or "")
+
+
 def has_crypto() -> bool:
     """当前环境是否具备加密能力（用于界面提示）。"""
     try:

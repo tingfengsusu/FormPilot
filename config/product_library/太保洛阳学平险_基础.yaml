@@ -53,5 +53,48 @@ field_mapping:
     required: false
     verify_after_fill: false
 
+  # —— 就读信息（2026-09-19 探针实测；locator 由 tools/probe_options.py 产出）——
+  # 学校名称是**文本输入**（不是下拉）：直接录入校名，规范名由
+  # config/school_aliases.yaml 人工确认（dictionary.kinds.school: text）
+  - property: 学校名称
+    locator: 'div.school-select'
+    required: true
+    verify_after_fill: true
+
+  # 学生类别是**必填的前置下拉**（默认「大中专学校学生」，必须显式选对，
+  # 否则小学生会被当成大中专学生投保）；取值由年级推导（config/batch.yaml）
+  - property: 学生类别
+    locator: 'div > span > div:nth-of-type(4) > div:nth-of-type(9) > div > div > div:nth-of-type(2) > div'
+    fill_mode: select
+    required: true
+    verify_after_fill: true
+
+  # 年级 / 班级：antd 下拉（实测选项不随学生类别变化，各自 12 / 30 个选项）
+  - property: 年级
+    locator: 'div > span > div:nth-of-type(4) > div:nth-of-type(10) > div > div > div:nth-of-type(2) > div'
+    fill_mode: select
+    required: true
+    verify_after_fill: true
+
+  - property: 班级
+    locator: 'div > span > div:nth-of-type(4) > div:nth-of-type(11) > div > div > div:nth-of-type(2) > div'
+    fill_mode: select
+    required: true
+    verify_after_fill: true
+
+  # —— 保险期限（2026-09-19 实测：readonly input + Vant 滚轮选择器）——
+  # 页面只允许「今天及之后」的起期；起期由导入/录入时按当天取平（见 batch.yaml）
+  - property: 保险期间起
+    locator: '#app > div > div > div > div:nth-of-type(3) > div > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div > span > div:nth-of-type(8) > div > div:nth-of-type(2) > div:nth-of-type(2) > div > span > span > label > input'
+    fill_mode: date
+    required: true
+    verify_after_fill: true
+
+  - property: 保险期间止
+    locator: '#app > div > div > div > div:nth-of-type(3) > div > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div > span > div:nth-of-type(8) > div > div:nth-of-type(3) > div:nth-of-type(2) > div > span > span > label > input'
+    fill_mode: date
+    required: true
+    verify_after_fill: true
+
 submit_button: 'text=我要投保'
 verify_delay_ms: 800

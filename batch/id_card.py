@@ -153,8 +153,9 @@ def validate_structure(id_card) -> IDCardCheck:
             check.errors.append(
                 f"出生日期非法（第 7-14 位为 {text[6:14]}）")
         check.gender = gender_of(text) or ""
-        check.province = province_of(text) or ""
-        if check.province is None:
+        province = province_of(text)
+        check.province = province or ""
+        if province is None:
             check.errors.append(f"地区码无效（前 2 位为 {text[:2]}）")
 
     return check

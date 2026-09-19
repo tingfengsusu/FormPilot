@@ -12,6 +12,11 @@
 from __future__ import annotations
 
 import os
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 
 def skip_test(reason: str) -> None:
@@ -26,3 +31,30 @@ def skip_test(reason: str) -> None:
         pytest.skip(reason)
         return
     print(f"skip: {reason}")
+
+
+def use_temp_key(tmp_dir: str = "") -> str:
+    """把身份证加密密钥指到临时文件，避免测试污染仓库配置。"""
+    import tempfile
+
+    path = os.path.join(tmp_dir or tempfile.gettempdir(), "formpilot_test_id.key")
+    os.environ["FORMPILOT_ID_KEY"] = path
+    return path
+
+
+def make_id_card(region: str = "410305", birth: str = "20150901",
+                 seq: str = "123", gender: str = "男") -> str:
+    """生成一个**校验位正确**的虚构身份证号（测试样本，非真实数据）。
+
+    :param region: 前 6 位地区码（默认河南洛阳某区）
+    :param birth: 出生日期 YYYYMMDD
+    :param seq: 顺序码前两位（1~2 位），第三位按性别补齐（奇数男/偶数女）
+    """
+    from batch import id_card as _id_card
+
+    order = "1" if gender == "男" else "0"
+    seq2 = (str(seq) + "0")[:2]
+    prefix = f"{region}{birth}{seq2}{order}"
+    assert len(prefix) == 17, prefix
+    total = sum(int(prefix[i]) * _id_card.WEIGHTS[i] for i in range(17))
+    return prefix + _id_card.CHECK_MAP[total % 11]

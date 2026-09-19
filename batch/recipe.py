@@ -86,7 +86,8 @@ class ValidateSpec:
     dictionary_fields: Dict[str, str] = field(default_factory=dict)
     rules: List[str] = field(default_factory=list)
 
-    def to_validator(self, dictionaries: Optional[DictionarySet] = None) -> Validator:
+    def to_validator(self, dictionaries: Optional[DictionarySet] = None,
+                     student_level_required: bool = False) -> Validator:
         return Validator(
             required=self.required or list(DEFAULT_REQUIRED_FALLBACK),
             age_range=self.age_range,
@@ -96,6 +97,7 @@ class ValidateSpec:
             dictionaries=dictionaries,
             dictionary_fields=self.dictionary_fields or None,
             duplicate_check=self.duplicate_check,
+            student_level_required=student_level_required,
         )
 
 
@@ -118,6 +120,8 @@ class Recipe:
     review: Dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_REVIEW))
     states: Dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_STATES))
     settings: Dict[str, Any] = field(default_factory=dict)
+    #: 学生类别推导规则（config/batch.yaml 的 student_level 段）
+    student_level_config: Dict[str, Any] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # 载入
@@ -152,6 +156,7 @@ class Recipe:
             review=_deep_merge(DEFAULT_REVIEW, data.get("review", {})),
             states=_deep_merge(DEFAULT_STATES, data.get("states", {})),
             settings=settings,
+            student_level_config=dict(settings.get("student_level") or {}),
         )
         # batch.yaml 的 execute.product 也作为兜底（Recipe 未声明时）
         if not recipe.execute.get("product"):
@@ -175,10 +180,26 @@ class Recipe:
         dictionary_cfg = self.settings.get("dictionary", {}) or {}
         return load_dictionary_set(
             config_dir=os.path.join(base, dictionary_cfg.get("config_dir", "config")),
-            strip_noise_enabled=bool(dictionary_cfg.get("strip_noise", False)))
+            strip_noise_enabled=bool(dictionary_cfg.get("strip_noise", False)),
+            kinds={str(k): str(v) for k, v in
+                   (dictionary_cfg.get("kinds") or {}).items()})
 
     def build_validator(self, dictionaries: Optional[DictionarySet] = None) -> Validator:
-        return self.validate_spec.to_validator(dictionaries)
+        return self.validate_spec.to_validator(
+            dictionaries, student_level_required=self.student_level_required)
+
+    # ------------------------------------------------------------------
+    @property
+    def student_level_rules(self) -> List[dict]:
+        """学生类别推导规则（原始年级写法 → 学生类别）。"""
+        return [dict(rule) for rule in
+                (self.student_level_config.get("rules") or [])
+                if isinstance(rule, dict)]
+
+    @property
+    def student_level_required(self) -> bool:
+        """学生类别是否必须推导出来（推导不出来 → 数据异常，不自动录入）。"""
+        return bool(self.student_level_config.get("require", True))
 
     @property
     def mapping_path(self) -> str:

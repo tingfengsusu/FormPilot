@@ -1,17 +1,29 @@
-# 学校下拉的权威选项（页面探针产出，**不要手改**）
+# 学校名称的权威选项（页面探针产出，**不要手改**）
 #
-# 由 tools/probe_options.py 打开投保页面、展开「学校」下拉、导出全部选项文本。
-# 这是字典的**唯一真相**（附录 C.1）：下拉不是文本输入，值必须精确命中选项，
-# 所以先抓选项，再映射台账写法（config/school_aliases.yaml），不是反过来。
+# 由 tools/probe_options.py 打开投保页面、抓取该字段后写下。
+# 字典的权威来源（设计文档附录 C.1）：先抓页面，再映射台账写法
+# （config/school_aliases.yaml），不是反过来。
 #
-# 探针用法（P-1 前置工序）：
-#   python tools/probe_options.py "太保洛阳学平险_基础" --dry-run   # 先看探测计划
-#   python tools/probe_options.py "太保洛阳学平险_基础"             # 真实抓取并写入
+# ⚠ 实测：该字段是**文本输入**（没有下拉选项），本文件空着是正常的；
+#    规范名请在 config/school_aliases.yaml 里人工确认后填写。
+# 匹配规则（dictionary.kinds.school: text）：
+#   页面上没有选项集合，权威值 = 人工确认的规范名（别名表目标值）；
+#   未显式映射的写法一律进「数据异常」——不猜。
 #
-# 产出前：dictionary.require_probed_options=false 时以别名表目标值为权威
-#         （过渡模式，导入不会全量进「数据异常」，但报告里会提示待探针）
-# 产出后：把 require_probed_options 设为 true 即启用严格模式
+# 抓取结果（2026-09-19 01:22:41）：
+#   品种：太保洛阳学平险_基础
+#   控件类型：文本输入（无下拉）   选项数：0
+#   locator：div.school-select
 #
-# 注意：该站点有访问频率限制，探测请间隔进行。
+# 程序只读下面的 options 列表；probe 段供排查，可忽略。
+# 注意：重新探测会覆盖本文件。
 
+probe:
+  product: 太保洛阳学平险_基础
+  url: https://dwx.cpic.com.cn/cxNew/dwx/mobilemsbv2/?mId=YOUR_ACTIVITY_ID&vCode=YOUR_ACTIVITY_CODE
+  widget: text
+  locator: div.school-select
+  source: auto
+  count: 0
+  probed_at: '2026-09-19 01:22:41'
 options: []

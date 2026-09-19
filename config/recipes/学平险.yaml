@@ -43,6 +43,24 @@ execute:
     监护人姓名: payer_name
     监护人电话: payer_phone
     保险方案: plan
+    学校名称: school                # 文本输入（规范名由 school_aliases.yaml 人工确认）
+    年级: grade                     # 下拉（页面实测 12 个选项）
+    班级: class_name                # 下拉（页面实测 30 个选项）
+    保险期间起: period_start         # 日期选择器（只允许今天及之后）
+    保险期间止: period_end
+  # 「学生类别」由年级推导，不来自某一列（见 config/batch.yaml 的 student_level）
+  required_properties:              # 品种 yaml 必须覆盖这些属性，缺一个就不开始录入
+    - 学生姓名
+    - 学生身份证号
+    - 监护人姓名
+    - 监护人电话
+    - 学校名称
+    - 学生类别
+    - 年级
+    - 班级
+    - 保险期间起
+    - 保险期间止
+  submit: false                     # 不自动点提交：提交与支付都是人工卡点
   screenshot: true                  # 每条录入后截图（复核时不用重看数据）
   serial: true                      # **串行**执行：投保系统一个会话一个操作
   max_retries: 3                    # 失败重试上限（指数退避），超过即「录入失败」

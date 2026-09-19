@@ -13,13 +13,24 @@
         ↓
     命中唯一 → 用该值；命中多个 → 数据异常（歧义，不猜）；未命中 → 数据异常
 
-**硬规则**：归一化后的匹配结果必须落在页面选项集合内，否则一律进「数据异常」，
-绝不猜一个相近值填进去——下拉里填了错误的值，可能产生一份错误的保单。
+**硬规则**：匹配结果必须落在权威集合内，否则一律进「数据异常」，
+绝不猜一个相近值填进去——填了错误的值，可能产生一份错误的保单。
 
-选项字典尚未探针产出时（options 为空），回退以别名表的目标值为权威
-（``authority="alias"``），并在匹配结果里标注 ``options_not_ready``，
-便于界面提示「先跑 P-1 探针」；探针产出后配置项
-``dictionary.require_probed_options: true`` 即启用严格模式。
+**权威集合按控件类型分两种**（``dictionary.kinds`` 配置，实测得出）：
+
+============  ==========================================================
+``choice``    下拉选择（年级 / 班级）：权威值 = **页面选项**（options_*.yaml，
+              探针产出）。别名目标值必须落在选项集合内，否则数据异常。
+``text``      文本输入（学校名称）：页面上没有选项集合，权威值 = **人工确认的
+              规范名**（*_aliases.yaml 的目标值）。未显式映射的写法一律数据异常。
+============  ==========================================================
+
+**没有「过渡模式」**：下拉字段（choice）在选项尚未探针产出时
+（``options_*.yaml`` 为空），别名表的目标值**不会**被当作权威值使用——
+那些值没有经过页面核对，放行等于把失败推迟到录入阶段（那里的报错更难排查）。
+此时所有下拉字典字段一律判「数据异常」，并明确提示先运行
+:mod:`tools.probe_options` 抓选项。文本字段（text）没有选项可探，
+规范名只能人工确认——但同样**不猜**：没映射的写法照样报数据异常。
 """
 from __future__ import annotations
 
@@ -39,6 +50,20 @@ MATCH_ALIAS = "alias"          # 经别名表命中权威值
 MATCH_EMPTY = "empty"          # 原值为空
 MATCH_AMBIGUOUS = "ambiguous"  # 归一化后命中多个候选（歧义，不猜）
 MATCH_UNMATCHED = "unmatched"  # 未命中任何权威值
+#: 别名表目标值不在页面选项集合内（配置错误 → 数据异常）
+MATCH_ALIAS_OUT_OF_OPTIONS = "alias_out_of_options"
+
+#: 控件类型：下拉选择（权威值 = 页面选项）。
+KIND_CHOICE = "choice"
+#: 控件类型：文本输入（页面上没有选项集合，权威值 = 人工确认的规范名）。
+KIND_TEXT = "text"
+
+#: 字段 key → 控件类型（默认下拉；由 config/batch.yaml 的 dictionary.kinds 覆盖）。
+DEFAULT_KINDS: Dict[str, str] = {
+    "school": KIND_CHOICE,
+    "grade": KIND_CHOICE,
+    "class_name": KIND_CHOICE,
+}
 
 #: 归一化时剥离的常见噪声后缀/前缀（仅作可选，默认关闭）。
 _NOISE_SUFFIXES = ("学校", "小学", "中学", "高中", "幼儿园", "校区")
@@ -47,7 +72,7 @@ _NOISE_PREFIXES = ("洛阳市", "洛阳市区", "洛阳")
 _FULLWIDTH = str.maketrans(
     "０１２３４５６７８９ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ"
     "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ"
-    "（）【】《》，。、：；！？　",
+    "（）【】《》，。：；！？　",
     "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
     "()[]<>,.:;!? ",
@@ -88,7 +113,7 @@ class MatchResult:
     canonical: str = ""                 # 命中的权威值（未命中为空）
     status: str = MATCH_UNMATCHED
     candidates: List[str] = field(default_factory=list)
-    authority: str = ""                 # "options"（页面选项）| "alias"（别名表目标值）
+    authority: str = ""                 # "options"（页面选项）| "none"（无字典）
     note: str = ""
 
     @property
@@ -98,13 +123,15 @@ class MatchResult:
     @property
     def detail(self) -> str:
         if self.ok:
-            return self.note or f"匹配到「{self.canonical}」（{self.authority}）"
+            return self.note or f"匹配到「{self.canonical}」（页面选项）"
         if self.status == MATCH_EMPTY:
             return "值为空"
         if self.status == MATCH_AMBIGUOUS:
-            return (f"「{self.raw}」同时命中多个候选：{'、'.join(self.candidates)}"
-                    f"——歧义，不猜")
-        return f"「{self.raw}」不在页面选项/别名表中（需人工确认后补别名）"
+            return self.note or (f"「{self.raw}」同时命中多个候选："
+                                 f"{'、'.join(self.candidates)}——歧义，不猜")
+        if self.status == MATCH_ALIAS_OUT_OF_OPTIONS:
+            return self.note or f"「{self.raw}」的别名目标值不在页面选项集合内"
+        return self.note or f"「{self.raw}」不在页面选项/别名表中（需人工确认后补别名）"
 
 
 class Dictionary:
@@ -115,7 +142,8 @@ class Dictionary:
                  aliases: Optional[Dict[str, str]] = None,
                  options_path: str = "",
                  aliases_path: str = "",
-                 strip_noise_enabled: bool = False):
+                 strip_noise_enabled: bool = False,
+                 kind: str = KIND_CHOICE):
         self.name = name
         self.options: List[str] = [str(o) for o in (options or []) if str(o).strip()]
         self.aliases: Dict[str, str] = {
@@ -124,57 +152,71 @@ class Dictionary:
         self.options_path = options_path
         self.aliases_path = aliases_path
         self.strip_noise_enabled = strip_noise_enabled
+        self.kind = kind if kind in (KIND_CHOICE, KIND_TEXT) else KIND_CHOICE
 
         #: 选项归一化索引（去重：同归一化值对应多个选项即歧义）
         self._option_index: Dict[str, List[str]] = {}
         for option in self.options:
             self._option_index.setdefault(normalize(option), []).append(option)
 
-        #: 别名目标值的归一化索引（用于「以别名为权威」的过渡模式）
-        self._alias_target_index: Dict[str, List[str]] = {}
-        for target in self.aliases.values():
-            self._alias_target_index.setdefault(normalize(target), []).append(target)
-
     # ------------------------------------------------------------------
     # 载入
     # ------------------------------------------------------------------
     @classmethod
     def load(cls, name: str, options_path: str, aliases_path: str,
-             strip_noise_enabled: bool = False) -> "Dictionary":
+             strip_noise_enabled: bool = False,
+             kind: str = KIND_CHOICE) -> "Dictionary":
         """从 options / aliases 两个 yaml 载入（文件缺失按空处理）。"""
         options = _load_yaml_list(options_path)
         aliases = _load_yaml_map(aliases_path)
         return cls(name=name, options=options, aliases=aliases,
                    options_path=options_path, aliases_path=aliases_path,
-                   strip_noise_enabled=strip_noise_enabled)
+                   strip_noise_enabled=strip_noise_enabled, kind=kind)
 
     # ------------------------------------------------------------------
     # 匹配
     # ------------------------------------------------------------------
     @property
+    def is_text_field(self) -> bool:
+        """页面上的该字段是不是文本输入（没有选项集合）。"""
+        return self.kind == KIND_TEXT
+
+    @property
     def options_ready(self) -> bool:
-        """页面选项是否已探针产出。"""
+        """权威值是否可用：下拉=选项已探针产出；文本输入=无需选项。"""
+        if self.is_text_field:
+            return True
         return bool(self.options)
 
     @property
     def authority_values(self) -> List[str]:
-        """权威值集合：优先页面选项，否则退化为别名表的目标值。"""
+        """权威值集合。
+
+        - 下拉（choice）：页面选项（下拉是唯一真相，没有退路）
+        - 文本输入（text）：人工确认的规范名（别名表目标值）——
+          页面上没有选项集合，这是唯一可用的权威来源，且**仍需人工逐条确认**
+        """
         if self.options:
             return list(self.options)
-        seen: List[str] = []
-        for target in self.aliases.values():
-            if target not in seen:
-                seen.append(target)
-        return seen
+        if self.is_text_field:
+            seen: List[str] = []
+            for target in self.aliases.values():
+                if target not in seen:
+                    seen.append(target)
+            return seen
+        return []
 
     @property
     def authority(self) -> str:
-        return "options" if self.options else "alias"
+        if self.options:
+            return "options"
+        return "manual" if self.is_text_field else "options"
 
     def match(self, text) -> MatchResult:
         """匹配一个台账写法到权威值。
 
-        命中唯一 → ok；命中多个 → 歧义；未命中 → unmatched。
+        命中唯一 → ok；命中多个 → 歧义；未命中/别名目标不在选项内 →
+        unmatched（数据异常，不猜）。
         """
         raw = "" if text is None else str(text)
         key = normalize(raw)
@@ -182,45 +224,107 @@ class Dictionary:
             return MatchResult(raw=raw, status=MATCH_EMPTY, authority=self.authority,
                                note="值为空")
 
-        candidates: List[str] = []
+        if self.is_text_field:
+            return self._match_text_field(raw, key)
 
         # 1) 选项文本直接命中
-        candidates.extend(self._option_index.get(key, []))
+        candidates = list(self._option_index.get(key, []))
+        if candidates:
+            return self._result_from_options(raw, candidates)
 
-        # 2) 别名表命中（别名 → 权威值）
+        # 2) 别名表命中（别名 → 权威值；目标值必须在选项集合内）
         alias_target = self.aliases.get(key)
         if alias_target:
-            candidates.append(alias_target)
-        else:
-            # 2b) 选项未产出时，允许「别名目标值」作为权威直接命中
-            if not self.options:
-                candidates.extend(self._alias_target_index.get(key, []))
+            return self._result_from_alias(raw, alias_target)
 
         # 3) 去噪声后再试一轮（可选）
-        if not candidates and self.strip_noise_enabled:
+        if self.strip_noise_enabled:
             stripped = strip_noise(raw)
-            candidates.extend(self._option_index.get(stripped, []))
-            target = self.aliases.get(stripped)
-            if target:
-                candidates.append(target)
-            if not self.options:
-                candidates.extend(self._alias_target_index.get(stripped, []))
+            if stripped and stripped != key:
+                candidates = list(self._option_index.get(stripped, []))
+                if candidates:
+                    return self._result_from_options(raw, candidates)
+                target = self.aliases.get(stripped)
+                if target:
+                    return self._result_from_alias(raw, target)
 
+        return self._unmatched(raw)
+
+    # ------------------------------------------------------------------
+    # 内部：命中判定
+    # ------------------------------------------------------------------
+    def _match_text_field(self, raw: str, key: str) -> MatchResult:
+        """文本输入字段：只有「人工确认过的写法」才放行（不猜）。"""
+        target = self.aliases.get(key)
+        if not target and self.strip_noise_enabled:
+            target = self.aliases.get(strip_noise(raw))
+        if target:
+            return MatchResult(
+                raw=raw, canonical=target, status=MATCH_ALIAS,
+                candidates=[target], authority=self.authority,
+                note=f"经人工确认：「{raw}」→「{target}」（页面为文本输入）")
+        # 值本身已是规范名（导入时已映射过一次，校验层再匹配时就是这个值）
+        if normalize(raw) in {normalize(v) for v in self.aliases.values()}:
+            return MatchResult(
+                raw=raw, canonical=raw, status=MATCH_EXACT,
+                candidates=[raw], authority=self.authority,
+                note=f"「{raw}」已是人工确认的规范名")
+        return MatchResult(
+            raw=raw, status=MATCH_UNMATCHED, authority=self.authority,
+            note=(f"「{raw}」没有映射到规范名（页面该字段是**文本输入**，"
+                  f"没有下拉选项可核对）——请在 {self._aliases_filename()} 里"
+                  f"人工确认后显式映射；不猜"))
+
+    def _result_from_options(self, raw: str, candidates: List[str]) -> MatchResult:
         unique = _unique(candidates)
-        if len(unique) == 1:
-            canonical = unique[0]
-            status = MATCH_EXACT if canonical in self._option_index.get(key, []) \
-                else MATCH_ALIAS
-            note = ""
-            if not self.options_ready:
-                note = (f"匹配到「{canonical}」（页面选项尚未探针产出，"
-                        f"当前以别名表为权威，请先运行 tools/probe_options.py）")
-            return MatchResult(raw=raw, canonical=canonical, status=status,
-                               candidates=unique, authority=self.authority, note=note)
         if len(unique) > 1:
             return MatchResult(raw=raw, status=MATCH_AMBIGUOUS, candidates=unique,
                                authority=self.authority)
-        return MatchResult(raw=raw, status=MATCH_UNMATCHED, authority=self.authority)
+        return MatchResult(raw=raw, canonical=unique[0], status=MATCH_EXACT,
+                           candidates=unique, authority=self.authority)
+
+    def _result_from_alias(self, raw: str, target: str) -> MatchResult:
+        """别名命中：目标值必须落在页面选项集合内（硬规则）。"""
+        if not self.options:
+            return MatchResult(
+                raw=raw, status=MATCH_UNMATCHED, authority=self.authority,
+                note=(f"别名表把「{raw}」映射到「{target}」，但页面选项尚未探针"
+                      f"产出（{self._options_filename()} 为空）——无法确认该值"
+                      f"能选中；请先运行 tools/probe_options.py 抓取选项"
+                      f"（不猜，也不放行）"))
+        matched = _unique(self._option_index.get(normalize(target), []))
+        if not matched:
+            return MatchResult(
+                raw=raw, status=MATCH_ALIAS_OUT_OF_OPTIONS, candidates=[target],
+                authority=self.authority,
+                note=(f"别名表把「{raw}」映射到「{target}」，但该值不在页面选项"
+                      f"集合内——别名表需人工核对（不猜，绝不填相近值）"))
+        if len(matched) > 1:
+            return MatchResult(
+                raw=raw, status=MATCH_AMBIGUOUS, candidates=matched,
+                authority=self.authority,
+                note=(f"别名表目标「{target}」在页面选项里对应多个选项："
+                      f"{'、'.join(matched)}——歧义，不猜"))
+        return MatchResult(raw=raw, canonical=matched[0], status=MATCH_ALIAS,
+                           candidates=matched, authority=self.authority,
+                           note=f"经别名表：「{raw}」→「{matched[0]}」")
+
+    def _unmatched(self, raw: str) -> MatchResult:
+        if not self.options:
+            note = (f"页面下拉选项尚未探针产出（{self._options_filename()} 为空）"
+                    f"——「{raw}」无法确认能否选中；请先运行 "
+                    f"tools/probe_options.py 抓取选项")
+        else:
+            note = (f"「{raw}」不在页面选项/别名表中"
+                    f"（需人工确认后补别名，不猜）")
+        return MatchResult(raw=raw, status=MATCH_UNMATCHED,
+                           authority=self.authority, note=note)
+
+    def _options_filename(self) -> str:
+        return os.path.basename(self.options_path) or "options_*.yaml"
+
+    def _aliases_filename(self) -> str:
+        return os.path.basename(self.aliases_path) or "*_aliases.yaml"
 
     def contains(self, canonical: str) -> bool:
         """权威值校验：结果必须落在权威集合内（硬规则）。"""
@@ -252,8 +356,9 @@ class DictionarySet:
         return all(d.options_ready for d in self._dicts.values())
 
     def missing_options(self) -> List[str]:
-        """尚未探针产出选项的字典名列表。"""
-        return [name for name, d in self._dicts.items() if not d.options_ready]
+        """尚未探针产出选项的**下拉**字典名列表（文本输入字段无需选项）。"""
+        return [name for name, d in self._dicts.items()
+                if not d.options_ready and not d.is_text_field]
 
     def unmatched(self, key: str, values: Iterable[str]) -> List[str]:
         """批量匹配，返回未命中/歧义的原始值（用于导入报告）。"""
@@ -265,15 +370,21 @@ class DictionarySet:
 
 
 def load_dictionary_set(config_dir: str = "",
-                        strip_noise_enabled: bool = False) -> DictionarySet:
+                        strip_noise_enabled: bool = False,
+                        kinds: Optional[Dict[str, str]] = None) -> DictionarySet:
     """载入三份字典（school / grade / class_name）。
 
     文件命名与设计文档附录 C.4 一致：
       config/options_school.yaml + config/school_aliases.yaml
       config/options_grade.yaml  + config/grade_aliases.yaml
       config/options_class.yaml  + config/class_aliases.yaml
+
+    :param kinds: 字段 key → 控件类型（``choice`` 下拉 / ``text`` 文本输入），
+        来自 ``config/batch.yaml`` 的 ``dictionary.kinds``（实测得出：
+        学校名称在投保页上是文本输入，没有选项集合）
     """
     base = config_dir or _DEFAULT_CONFIG_DIR
+    kinds = dict(DEFAULT_KINDS, **(kinds or {}))
     specs = {
         "school": ("options_school.yaml", "school_aliases.yaml"),
         "grade": ("options_grade.yaml", "grade_aliases.yaml"),
@@ -285,7 +396,8 @@ def load_dictionary_set(config_dir: str = "",
             name=key,
             options_path=os.path.join(base, options_file),
             aliases_path=os.path.join(base, aliases_file),
-            strip_noise_enabled=strip_noise_enabled)
+            strip_noise_enabled=strip_noise_enabled,
+            kind=kinds.get(key, KIND_CHOICE))
     return DictionarySet(dictionaries)
 
 

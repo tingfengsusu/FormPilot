@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from . import id_card as id_card_mod
 from .dictionaries import MATCH_EMPTY, DictionarySet, load_dictionary_set
@@ -37,6 +37,7 @@ RULE_FORMAT = "format"
 RULE_PERIOD_SANITY = "period_sanity"
 RULE_DUPLICATE = "duplicate"
 RULE_DICTIONARY = "dictionary"
+RULE_STUDENT_LEVEL = "student_level"
 
 #: 默认必填字段。
 DEFAULT_REQUIRED = ("name", "id_card", "phone", "school", "class_name",
@@ -190,6 +191,84 @@ def resolve_period(text: Any, ref_year: int = DEFAULT_REF_YEAR,
     return result
 
 
+def resolve_period_floor(value: Any, today: Optional[date] = None
+                         ) -> Optional[date]:
+    """解析「保险期间起期最早允许到哪天」的配置。
+
+    实测：投保页的「保险期间·起」是日期选择器，**只能选今天及之后**，
+    台账里更早的起期填不进去（填了也会被页面拒绝）。配置取值：
+
+    - ``today``（或 ``今天``）：取 today（默认 date.today()）
+    - ``YYYY-MM-DD``：指定最早日期
+    - 空 / ``off`` / ``none`` / ``false``：不限制（返回 None）
+    """
+    text = normalize_text(value).lower()
+    if not text or text in ("off", "none", "false", "0"):
+        return None
+    if text in ("today", "今天"):
+        return today or date.today()
+    parsed = parse_date(text)
+    if parsed is None or parsed.year == 1900:   # 无年份哨兵 = 配置写错
+        return None
+    return parsed
+
+
+def shift_period_to_floor(start: date, end: date, floor: date) -> Tuple[date, date]:
+    """把保险期间整体平移到 ``floor``：**保持原时长不变**。
+
+    例：2026-08-22 ~ 2027-08-21（364 天）→ 2026-09-19 ~ 2027-09-18（同样 364 天）。
+    """
+    days = (end - start).days
+    return floor, floor + timedelta(days=days)
+
+
+def apply_period_floor(period_start: str, period_end: str, floor: Optional[date]
+                       ) -> Tuple[str, str, str]:
+    """起期早于 ``floor`` 时整体平移，返回 ``(起, 止, 调整说明)``。
+
+    实测：投保页的「保险期间·起」只能选**今天及之后**。导入时按导入日取平，
+    **录入时（runner）必须按录入当天再取平一次**——否则今天导入、明天录入时
+    起期已经过期，页面会拒绝。台账原值不动（以 Excel 为准）。
+    """
+    if floor is None or not period_start or not period_end:
+        return period_start, period_end, ""
+    try:
+        start = date.fromisoformat(period_start)
+        end = date.fromisoformat(period_end)
+    except ValueError:
+        return period_start, period_end, ""
+    if start >= floor:
+        return period_start, period_end, ""
+    new_start, new_end = shift_period_to_floor(start, end, floor)
+    note = (f"起期按页面约束调整：{period_start} → {new_start.isoformat()}"
+            f"（止期 {period_end} → {new_end.isoformat()}，"
+            f"保持 {(end - start).days} 天）")
+    return new_start.isoformat(), new_end.isoformat(), note
+
+
+def derive_student_level(raw_grade: Any, rules: Sequence[dict]) -> str:
+    """由台账里的**原始年级写法**推导页面上要选的「学生类别」。
+
+    实测（使用者确认）：大学生要选「大中专学校学生」再选 1/2/3，
+    所以不能只看归一化后的年级（「1年级」既可能是小学一年级，也可能是大一）。
+
+    :param rules: ``[{"level": "小学生", "prefixes": ["一", "二", ...]}, ...]``，
+        按顺序做前缀匹配（先匹配到的赢）
+    :return: 学生类别文本；推导不出来返回空串
+    """
+    raw = normalize_text(raw_grade)
+    if not raw:
+        return ""
+    for rule in rules or []:
+        level = str(rule.get("level") or "")
+        prefixes = [str(p) for p in (rule.get("prefixes") or []) if str(p)]
+        if not level:
+            continue
+        if raw in prefixes or any(raw.startswith(p) for p in prefixes):
+            return level
+    return ""
+
+
 @dataclass
 class ValidationReport:
     """一条明细的完整校验结论。"""
@@ -225,7 +304,8 @@ class Validator:
                  ref_year: int = DEFAULT_REF_YEAR,
                  dictionaries: Optional[DictionarySet] = None,
                  dictionary_fields: Optional[Dict[str, str]] = None,
-                 duplicate_check: bool = True):
+                 duplicate_check: bool = True,
+                 student_level_required: bool = False):
         self.required = list(required)
         self.age_range = (int(age_range[0]), int(age_range[1]))
         self.period_days = tuple(period_days) if period_days else ()
@@ -238,6 +318,8 @@ class Validator:
             "school": "school", "grade": "grade", "class_name": "class_name",
         })
         self.duplicate_check = duplicate_check
+        #: 是否要求学生类别必须推导出来（推导不出来就不该自动录入）
+        self.student_level_required = student_level_required
 
     # ------------------------------------------------------------------
     # 入口
@@ -256,6 +338,7 @@ class Validator:
         results += self.check_phone(applicant)
         results += self.check_period(applicant)
         results += self.check_dictionary(applicant)
+        results += self.check_student_level(applicant)
         if self.duplicate_check:
             results += self.check_duplicate(applicant, duplicate_ids)
         return ValidationReport(results)
@@ -408,6 +491,34 @@ class Validator:
                 applicant_id=applicant.id or 0, field=fieldname,
                 rule=RULE_DICTIONARY, passed=match.ok, detail=match.detail))
         return results
+
+    # ------------------------------------------------------------------
+    # 学生类别（录入时要先选的字段）
+    # ------------------------------------------------------------------
+    def check_student_level(self, applicant: Applicant) -> List[ValidationResult]:
+        """学生类别必须能推导出来，否则不自动录入。
+
+        页面上的「学生类别」是必填项且有承保口径含义（小学生 / 中学生 /
+        大中专学校学生）。推导不出来时若不管它，页面会保留默认值
+        （实测默认「大中专学校学生」）—— 那会把小学生当成大中专学生投保。
+        """
+        if not self.student_level_required:
+            return []
+        grade = str(getattr(applicant, "grade", "") or "").strip()
+        level = str(getattr(applicant, "student_level", "") or "").strip()
+        if level:
+            return [ValidationResult(
+                applicant_id=applicant.id or 0, field="student_level",
+                rule=RULE_STUDENT_LEVEL, passed=True,
+                detail=f"学生类别：{level}")]
+        if not grade:
+            return []      # 年级为空由必填/字典规则负责
+        return [ValidationResult(
+            applicant_id=applicant.id or 0, field="student_level",
+            rule=RULE_STUDENT_LEVEL, passed=False,
+            detail=(f"未能从年级「{grade}」推导出学生类别（小学生 / 中学生 / "
+                    f"大中专学校学生）——请人工确认后再录入，"
+                    f"否则页面会保留默认类别"))]
 
 
 def validate(rec: Applicant, validator: Optional[Validator] = None,

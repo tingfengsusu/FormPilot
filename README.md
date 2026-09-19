@@ -275,6 +275,76 @@ python tools/scan_url.py https://kyfw.12306.cn/otn/leftTicket/init
 python tools/shoot_mock_full.py   # 输出到 docs/screenshots/
 ```
 
+### 批量投保录入（batch，P0）
+
+把「手写台账 → 人工逐条录入」改成「Excel 导入 → 校验 → 批量录入 → 人工只复核异常项」。
+设计规格见仓库外的《FormPilot改造设计-批量投保录入.md》（含附录 B/C 的修正）。
+
+已实现：
+
+- **P0 导入/校验/落库**：`batch/` —— 身份证校验位（GB 11643-1999）、校验规则、
+  字典归一化、Excel/CSV 导入落库（状态机 + 审计 + 身份证加密存储）
+- **P-1 页面探针**：`tools/probe_options.py` —— 抓下拉权威选项、识别文本字段、
+  级联展开（`batch/probe.py`）
+- **P1 批量执行 + 复核**：`batch/runner.py`（串行填表 → 回读 → 截图 →
+  「待复核」/「录入失败」，失败重试、中断恢复、**不自动提交**）、
+  `batch/reviewer.py`（通过/打回/批量通过，异常优先）、
+  `gui/batch_page.py`（批次 → 明细着色 → 三栏复核，J/K/Enter/Backspace 键盘操作）
+
+未做：`batch/exporter.py`（P2 导出与提效统计）。
+
+两条不能破的规则：
+
+1. **身份证校验位是质量闸门**：18 位里第 18 位是前 17 位算出来的，验不过的必然是错的
+2. **字典按控件类型定权威来源**（`config/batch.yaml` 的 `dictionary.kinds`）：
+   - 下拉字段（年级 / 班级）：权威值 = **页面选项**（`config/options_*.yaml`），
+     台账写法经别名表映射后**必须落在选项集合内**，否则一律「数据异常」
+   - 文本字段（学校名称）：页面上没有选项集合，权威值 = **人工确认的规范校名**
+     （`config/school_aliases.yaml` 的目标值）；没显式映射的写法照样「数据异常」
+   —— 两种情况都**不猜**，不用「自己拟定的值」放行（那只会把失败推迟到录入阶段）
+
+**真实页面实测结构（2026-09-19，修正了设计文档附录 C 的假设）**：
+
+| 字段 | 实际形态 | 说明 |
+|---|---|---|
+| 学校名称 | **文本输入**（无下拉） | placeholder「请录入学校名称」；规范名人工确认 |
+| 学生类别 | 下拉（自定义组件） | 大中专学校学生 / 中学生 / 小学生；**由年级推导**后录入 |
+| 年级 | 下拉（自定义组件） | **选项随学生类别变化**：小学生→1~6年级；中学生→初中/高中各年级 |
+| 班级 | 下拉（自定义组件） | 1班…30班（已探针产出 30 个选项） |
+| 保险期限·起止 | **日期选择器**（只允许今天及之后） | 填法见 `page/date_picker.py`（`fill_mode: date`）；起期按**录入当天**取平 |
+
+起期口径（使用者确认）：**起期取今天、止期同步顺延（保持原时长）**，并逐条留痕
+提醒人工确认——不修改源文件，原始台账值以 Excel 为准：
+
+- `config/batch.yaml` → `import.period_start_floor: today`（可填 `YYYY-MM-DD` 或 `off`）
+- 导入报告会列出「起期已调整 N 条」+ 样例；每条在 validation 表里留一条
+  `rule=period_adjusted` 的记录（明细含原起期与调整后起期）
+- 起保日 = **录入当天**的口径，P1 录入时会再按当天重新取平（避免跨天失效）
+
+页面探针（P-1，抓下拉选项 —— 下拉字段权威值的唯一来源）：
+
+```bash
+# 先看探测计划（不打开浏览器）
+python tools/probe_options.py "太保洛阳学平险_基础" --dry-run
+# 真实抓取：打开浏览器 → 探测学校/学生类别/年级/班级 → 写入 config/options_*.yaml
+#（会逐个选择「学生类别」的每个选项，分别抓年级/班级，记录到 probe.by_selector）
+python tools/probe_options.py "太保洛阳学平险_基础" --qr "二维码图片.png"
+# 只核对配置：选项是否已产出、别名表目标值是否都在权威集合内
+python tools/probe_options.py --check
+```
+
+> 探针复用现有的「二维码 → URL → Playwright 打开」流程（该页面是微信内打开的 H5，
+> 直接输网址会 ERR-2021），需要人工确认的步骤都会明确提示（无人值守时加 `--yes`）。
+> 投保站点有访问频率限制，探测请间隔进行。
+> 注意用**项目虚拟环境**的解释器运行（Playwright 的浏览器按 Python 环境各自安装）：
+> `.venv\Scripts\python.exe tools\probe_options.py ...`
+
+真实数据体检（需本机存在 `records_final.xlsx`，否则自动跳过）：
+
+```bash
+python tests/test_batch_real_data.py    # 119 条：身份证校验位、字典未命中清单
+```
+
 ---
 
 ## 演示截图
@@ -308,7 +378,7 @@ python tools/shoot_mock_full.py   # 输出到 docs/screenshots/
 # 方式一：一键运行全部并输出统计（通过/跳过/失败 + 耗时）
 python tests/run_all.py
 
-# 方式二：pytest（51 个用例，装了 pytest 后直接用）
+# 方式二：pytest（装了 pytest 后直接用）
 pytest tests/ -q
 ```
 
@@ -328,6 +398,16 @@ python tests/test_mock_full_page.py  # 端到端：Playwright 填全字段 Mock 
 python tests/test_online_12306.py    # 在线：12306 真实网页（联想选择框）
 python tests/test_online_tencent_ocr.py  # 在线：腾讯云真实身份证识别
 python tests/test_online_web_llm.py      # 在线：网页版 DeepSeek 真实全自动调用
+
+# —— 批量投保录入（batch，纯逻辑层，不依赖浏览器）——
+python tests/test_batch_id_card.py       # 身份证校验位 / 出生日期 / 年龄
+python tests/test_batch_dictionaries.py  # 字典归一化 + 别名匹配 + 未命中不猜
+python tests/test_batch_validator.py     # 必填 / 手机号 / 期限 / 重复 / 字典
+python tests/test_batch_importer.py      # 列名映射 / 占位符 / 日期补年份 / 落库
+python tests/test_batch_db.py            # 状态机 + 审计 + 加密脱敏 + Recipe
+python tests/test_batch_probe.py         # 页面探针（假页面，不依赖浏览器）
+python tests/test_batch_probe_page.py    # 页面探针端到端（本地 Mock 页 + Playwright）
+python tests/test_batch_real_data.py     # 真实数据体检（无数据文件时跳过）
 
 # GUI 离屏烟雾测试（属性管理/向导/面板，不开窗口）
 python tools/smoke_property_ui.py
