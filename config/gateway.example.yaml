@@ -1,0 +1,51 @@
+# 消息驱动接入配置（**示例**；复制成 gateway.yaml 后填自己的凭据）
+#
+# 注意：gateway.yaml 已加入 .gitignore（含 App Secret），不要提交。
+#       cp config/gateway.example.yaml config/gateway.yaml
+
+# —— 飞书企业自建应用（事件订阅选「长连接」）——
+# 创建步骤：开放平台 → 创建企业自建应用 → 事件订阅「长连接」+
+#   订阅事件 im.message.receive_v1 → 权限 im:message / im:resource → 发布并加机器人进群
+feishu:
+  app_id: ""            # 例如 cli_a1b2c3d4e5f6g7h8
+  app_secret: ""        # 开放平台「凭证与基础信息」里的 App Secret
+  log_level: INFO       # DEBUG 可看长连接心跳
+
+# —— 存储 ——
+storage:
+  db_path: data/gateway.db
+  screenshot_dir: data/screenshots/gateway
+
+# —— 队列与重试（设计文档：初期 SQLite + 单 worker，不上 Redis）——
+queue:
+  name: default
+worker:
+  max_retries: 3              # 用尽 → ALERT（异常预警）
+  retry_backoff_seconds: 5    # 指数退避：5s / 10s / 20s
+
+# —— 品种：消息文本里的关键词 → 用哪个品种、哪个来源识别附件、字段怎么映射 ——
+# 发「学平险」+ 一张证件照 → 自动识别 → 填投保页 → 回推截图
+varieties:
+  学平险:
+    product: 太保洛阳学平险_基础     # config/product_library/ 下的品种
+    ocr_source: 身份证OCR           # 附件用哪个属性来源识别（sources/）
+    field_map:                      # OCR 字段 → 品种属性
+      姓名: 学生姓名
+      身份证号: 学生身份证号
+    extra_properties:               # 固定补充的属性（可选）
+      # 保险方案: 太护学100
+  # 完全离线的品种：指向本地 mock 页面，演示/自测不必碰真实投保页
+  本地测试:
+    product: 学平险_本地Mock测试
+    ocr_source: 身份证OCR
+    field_map:
+      姓名: 学生姓名
+      身份证号: 学生身份证号
+    extra_properties:               # 证件照里没有的字段（演示用固定值）
+      监护人姓名: 演示家长
+      监护人电话: "13800000000"
+      保险方案: 基础版（100元）
+  12306:
+    product: 在线验证_12306余票查询
+    ocr_source: Excel名单
+    field_map: {}

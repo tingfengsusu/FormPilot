@@ -353,6 +353,53 @@ python tests/test_batch_real_data.py    # 119 条：身份证校验位、字典�
 
 ---
 
+### 消息驱动：飞书机器人（P0）
+
+把 FormPilot 从「本地桌面工具」变成「**消息触发 → 全链路自动化 → 结果回推**」：
+
+```
+飞书（长连接事件订阅）→ gateway/    收消息 + 下载附件
+        ↓ 入队（幂等键 = msg_id）
+orchestrator/  SQLite 任务队列 + 单 worker
+               PENDING → OCR → MAPPING → FILLING → VERIFYING → DONE
+                                                 └→ FAILED →（重试<3）→ PENDING
+                                                              └→ ALERT（@负责人）
+        ↓
+executor/      复用 FormPilot：证件照 OCR → 字段映射 → Playwright 填表 → 回读校验
+        ↓
+回推            「已填完 + 截图」或「失败原因」，结果写回队列（task/task_step）
+```
+
+**先跑离线闭环（不需要飞书凭据、不联网、不碰真实页面）**：
+
+```bash
+python tools/generate_test_idcard.py          # 生成一张合成证件照
+python tools/feishu_bot.py --demo --text "本地测试" --image tests/_samples/test_idcard.png
+python tools/feishu_bot.py --status           # 看任务/步骤/状态
+```
+
+**真连飞书**（一次性准备，见 `config/gateway.example.yaml`）：
+
+1. 飞书开放平台 → 创建**企业自建应用** → 拿 App ID / App Secret
+2. 「事件订阅」→ 方式选 **长连接** → 订阅事件 `接收消息 im.message.receive_v1`
+3. 「权限管理」开 `im:message`（收发消息）、`im:resource`（下载附件）
+4. 发布版本 → 把机器人加进群 → `cp config/gateway.example.yaml config/gateway.yaml` 填凭据
+5. `python tools/feishu_bot.py`（阻塞收消息 + 后台消费）
+
+> **为什么用长连接**：程序主动 WebSocket 连出去，**不需要公网 IP / 域名 / 备案**，
+> 开发与演示跑在自己机器上就够；要上生产再迁云服务器 + 换 Redis 队列（架构已留口子）。
+>
+> **合规边界**（设计文档第九节）：只对接官方 API，**绝不 hook 个人微信**；
+> 证件照本地处理、台账只存必要字段；串行低频，不绕平台风控。
+
+模块与设计文档的对应：`gateway/`（4.1 接入层）、`orchestrator/`（4.2 队列与编排）、
+`executor/`（4.3 执行层，薄封装复用现有代码）、`config/gateway*.yaml`（品种映射）。
+
+尚未做的（设计文档 P1/P2）：`ledger/`（台账与提效数据）、`report/`（日终报表 +
+异常预警 @负责人）、异常自愈知识库、企微通道。
+
+---
+
 ## 演示截图
 
 | 说明 | 截图 |
@@ -415,8 +462,14 @@ python tests/test_batch_probe.py         # 页面探针（假页面，不依赖�
 python tests/test_batch_probe_page.py    # 页面探针端到端（本地 Mock 页 + Playwright）
 python tests/test_batch_real_data.py     # 真实数据体检（无数据文件时跳过）
 
-# GUI 离屏烟雾测试（属性管理/向导/面板，不开窗口）
+# —— 消息驱动（飞书机器人，不联网/不需凭据）——
+python tests/test_gateway.py             # 统一消息模型 + 飞书事件解析 + console 通道
+python tests/test_orchestrator.py        # 任务状态机 + 幂等队列 + worker 重试/告警
+python tests/test_executor.py            # 品种匹配 + 字段映射 + 执行链路（假 OCR/填表）
+
+# GUI 离屏烟雾测试（属性管理/向导/批量页，不开窗口）
 python tools/smoke_property_ui.py
+python tools/smoke_batch_ui.py
 ```
 
 > 在线与浏览器用例在无网络 / 未装 Playwright / 未配置密钥 / 服务未开通时
