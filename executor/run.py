@@ -19,16 +19,28 @@
         field_map:                       # OCR 字段 → 品种属性
           姓名: 学生姓名
           身份证号: 学生身份证号
+        auto_period: true                # 保险期间起 = 页面允许的最早日期（明天）
+        extra_properties:                # 照片里没有的字段（可被消息里的 k=v 覆盖）
+          学校名称: 柳泉小学
+
+消息里可以临时覆盖字段（单条录入的常见需求）::
+
+    学平险 班级=2班 年级=3年级 监护人电话=13900000000
 """
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from core.property_pool import PropertyPool
 
 from orchestrator.worker import ExecResult
+
+#: 消息里的字段覆盖写法：``键=值``（中文键名，值不含空格/逗号）。
+_OVERRIDE_RE = re.compile(r"([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)\s*=\s*([^\s，,]+)")
 
 
 @dataclass
@@ -40,6 +52,9 @@ class VarietyConfig:
     ocr_source: str = "身份证OCR"
     field_map: Dict[str, str] = field(default_factory=dict)
     extra_properties: Dict[str, str] = field(default_factory=dict)
+    #: 自动补保险期间（起 = 页面允许的最早日期；止 = 起 + period_days 天）
+    auto_period: bool = False
+    period_days: int = 364
 
     @classmethod
     def from_dict(cls, keyword: str, data: Dict[str, Any]) -> "VarietyConfig":
@@ -50,6 +65,8 @@ class VarietyConfig:
             field_map={str(k): str(v) for k, v in (data.get("field_map") or {}).items()},
             extra_properties={str(k): str(v) for k, v in
                               (data.get("extra_properties") or {}).items()},
+            auto_period=bool(data.get("auto_period", False)),
+            period_days=int(data.get("period_days", 364)),
         )
 
 
@@ -59,11 +76,14 @@ class FormPilotExecutor:
     def __init__(self, varieties: Dict[str, VarietyConfig],
                  screenshot_dir: str = "",
                  ocr_fn: Optional[Callable[[str, str], Dict[str, Any]]] = None,
-                 fill_fn: Optional[Callable[..., Dict[str, Any]]] = None):
+                 fill_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+                 period_start_floor: str = "tomorrow"):
         self.varieties = dict(varieties or {})
         self.screenshot_dir = screenshot_dir or os.path.join("data", "screenshots")
         self._ocr_fn = ocr_fn
         self._fill_fn = fill_fn
+        #: 保险期间起的最早日期（实测：投保页日期列从「明天」开始）
+        self.period_start_floor = period_start_floor
 
     # ------------------------------------------------------------------
     # 对外：worker 的 executor
@@ -89,11 +109,16 @@ class FormPilotExecutor:
                 "没有从附件里识别出可用字段"
                 + ("（消息里没有附件？）" if not images else "")))
 
-        # 2) MAPPING：字段 → 品种属性
+        # 2) MAPPING：字段 → 品种属性（OCR + 固定补充），再让消息里的 k=v 覆盖
         started = time.time()
         values = self._map_fields(fields, config)
+        overrides = self._message_overrides(task.message_text)
+        values.update(overrides)
+        for key, value in self._auto_period(config).items():
+            values.setdefault(key, value)
         note_step("MAPPING", ok=bool(values),
-                  detail=f"映射属性 {len(values)} 个：{'、'.join(values)}",
+                  detail=f"映射属性 {len(values)} 个：{'、'.join(values)}"
+                         + (f"（消息覆盖 {len(overrides)} 个）" if overrides else ""),
                   elapsed_ms=int((time.time() - started) * 1000))
         if not values:
             return ExecResult(ok=False, error=(
@@ -172,6 +197,35 @@ class FormPilotExecutor:
         values.update({k: v for k, v in (config.extra_properties or {}).items()
                        if v not in (None, "")})
         return values
+
+    @staticmethod
+    def _message_overrides(text: str) -> Dict[str, str]:
+        """消息文本里的字段覆盖：``学平险 班级=2班 年级=3年级`` → {班级: 2班, ...}
+
+        单条录入时同一个学校也有不同年级/班级/家长电话，靠消息临时覆盖比
+        每次都去改配置方便得多。
+        """
+        return {match.group(1): match.group(2)
+                for match in _OVERRIDE_RE.finditer(str(text or ""))}
+
+    def _auto_period(self, config: VarietyConfig) -> Dict[str, str]:
+        """按「页面允许的最早日期」自动补保险期间（起 + N 天）。
+
+        实测：投保页「保险期间·起」的日期列**从明天开始**，止期由页面
+        按「起 + 364 天」自动算（品种里标了 verify_only）——所以这里给出
+        起止两个值：起用于填写，止用于回读核对。
+        """
+        if not config.auto_period:
+            return {}
+        from batch.validator import resolve_period_floor
+
+        floor = resolve_period_floor(self.period_start_floor)
+        if floor is None:
+            return {}
+        start = floor
+        end = floor + timedelta(days=max(0, int(config.period_days)))
+        return {"保险期间起": start.isoformat(),
+                "保险期间止": end.isoformat()}
 
     def _fill(self, config: VarietyConfig, values: Dict[str, Any],
               task: Any) -> Dict[str, Any]:

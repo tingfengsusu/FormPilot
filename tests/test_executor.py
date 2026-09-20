@@ -22,7 +22,8 @@ def _varieties() -> dict:
     return {
         "学平险": VarietyConfig(
             keyword="学平险", product="太保洛阳学平险_基础", ocr_source="身份证OCR",
-            field_map={"姓名": "学生姓名", "身份证号": "学生身份证号"}),
+            field_map={"姓名": "学生姓名", "身份证号": "学生身份证号"},
+            auto_period=True),
         "学平险批量": VarietyConfig(
             keyword="学平险批量", product="学平险_Mock全字段",
             field_map={"姓名": "学生姓名"}),
@@ -138,6 +139,55 @@ def test_executor_ocr_failure_is_clear():
     assert not result.ok and "没有从附件里识别出可用字段" in result.error
 
 
+def test_message_overrides():
+    """消息里的 k=v 覆盖（单条录入时同一学校也有不同班级/电话）。"""
+    overrides = FormPilotExecutor._message_overrides(
+        "学平险 班级=2班 年级=3年级 监护人电话=13900000000")
+    assert overrides == {"班级": "2班", "年级": "3年级",
+                         "监护人电话": "13900000000"}
+    assert FormPilotExecutor._message_overrides("学平险") == {}
+    assert FormPilotExecutor._message_overrides("") == {}
+
+
+def test_auto_period_uses_page_floor():
+    """保险期间起 = 页面允许的最早日期（明天）；止 = 起 + 364 天。"""
+    from datetime import date, timedelta
+
+    executor = FormPilotExecutor(_varieties(), period_start_floor="tomorrow")
+    config = _varieties()["学平险"]
+    values = executor._auto_period(config)
+    tomorrow = date.today() + timedelta(days=1)
+    assert values["保险期间起"] == tomorrow.isoformat()
+    assert values["保险期间止"] == (tomorrow + timedelta(days=364)).isoformat()
+    # 没开 auto_period 的品种不生成
+    assert executor._auto_period(_varieties()["本地测试"]) == {}
+    # off = 不限制 → 也不生成
+    assert FormPilotExecutor(_varieties(),
+                             period_start_floor="off")._auto_period(config) == {}
+
+
+def test_overrides_beat_extra_properties():
+    """优先级：消息覆盖 > extra_properties > OCR。"""
+    calls = {}
+
+    def fill_fn(config, values, task):
+        calls.update(values)
+        return {"report": [{"property": "学生姓名", "status": "filled"}],
+                "issues": [], "screenshot": ""}
+
+    varieties = _varieties()
+    varieties["学平险"] = VarietyConfig(
+        keyword="学平险", product="p", field_map={"姓名": "学生姓名"},
+        extra_properties={"班级": "1班"}, auto_period=True)
+    executor = FormPilotExecutor(varieties, ocr_fn=lambda path, src: _ocr(),
+                                 fill_fn=fill_fn)
+    result = executor(_task(text="学平险 班级=2班"), lambda *a, **k: None)
+    assert result.ok
+    assert calls["班级"] == "2班"                  # 消息覆盖赢了
+    assert calls["学生姓名"] == "张伟"               # OCR 字段
+    assert "保险期间起" in calls                    # auto_period 补上了
+
+
 if __name__ == "__main__":
     test_resolve_variety()
     test_map_fields_and_extras()
@@ -147,4 +197,7 @@ if __name__ == "__main__":
     test_executor_without_attachment()
     test_executor_reports_fill_problems()
     test_executor_ocr_failure_is_clear()
+    test_message_overrides()
+    test_auto_period_uses_page_floor()
+    test_overrides_beat_extra_properties()
     print("test_executor.py 全部通过 ✓")

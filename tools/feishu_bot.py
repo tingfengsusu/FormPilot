@@ -77,7 +77,8 @@ def _build(args) -> tuple:
     executor = FormPilotExecutor(
         varieties=load_varieties(config),
         screenshot_dir=screenshot_dir if os.path.isabs(screenshot_dir)
-        else os.path.join(_PROJECT_ROOT, screenshot_dir))
+        else os.path.join(_PROJECT_ROOT, screenshot_dir),
+        period_start_floor=str(exec_cfg.get("period_start_floor") or "tomorrow"))
 
     if args.demo:
         channel = ConsoleChannel(messages=make_demo_messages(
