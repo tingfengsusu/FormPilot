@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import yaml
 
 from executor.run import FormPilotExecutor, load_varieties
+from gateway.aggregator import DEFAULT_WINDOW_SECONDS, MessageAggregator
 from gateway.console import ConsoleChannel, make_demo_messages
 from gateway.feishu import FeishuChannel
 from ledger import DEFAULT_MANUAL_SECONDS, Ledger
@@ -96,7 +97,7 @@ def _build(args) -> tuple:
 
 def _handle_message(queue: TaskQueue, executor: FormPilotExecutor,
                     ledger: Ledger, channel, message) -> None:
-    """收到消息：先看是不是查询命令，否则解析品种后入队。"""
+    """收到消息（可能已合并）：先看是不是查询命令，否则解析品种后入队。"""
     text = (message.text or "").strip()
     if _is_status_command(text):
         _reply_text(queue, channel, message, _status_text(queue))
@@ -113,6 +114,26 @@ def _handle_message(queue: TaskQueue, executor: FormPilotExecutor,
         return
     print(f"[{now_str()}] 入队任务 #{task.id}：{text!r} "
           f"品种={task.variety or '未识别'} 附件={len(message.attachments)}")
+
+
+def _make_on_message(queue: TaskQueue, executor: FormPilotExecutor,
+                     ledger: Ledger, channel, window_seconds: float):
+    """把「收消息」包一层合并器（并让命令消息立即处理、不进缓冲）。"""
+    aggregator = MessageAggregator(
+        on_complete=lambda msg: _handle_message(queue, executor, ledger,
+                                                channel, msg),
+        window_seconds=window_seconds)
+
+    def on_message(message) -> None:
+        text = (message.text or "").strip()
+        is_command = (_is_status_command(text) or _is_report_command(text)) \
+            and not message.attachments
+        if is_command or window_seconds <= 0:
+            _handle_message(queue, executor, ledger, channel, message)
+            return
+        aggregator.add(message)
+
+    return on_message, aggregator
 
 
 def _is_status_command(text: str) -> bool:
@@ -194,9 +215,14 @@ def main(argv=None) -> int:
                     alert_mention=str(alert_cfg.get("mention") or ""),
                     )
     max_tasks = args.max_tasks or None
-
-    def on_message(msg) -> None:
-        _handle_message(queue, executor, ledger, channel, msg)
+    # 飞书不支持「文本+图片」同条消息（会推两条事件）→ 按窗口合并成一条任务
+    feishu_cfg = config.get("feishu") or {}
+    window = float(feishu_cfg.get("merge_window_seconds",
+                                  DEFAULT_WINDOW_SECONDS))
+    on_message, aggregator = _make_on_message(queue, executor, ledger, channel,
+                                              window)
+    print(f"消息合并窗口：{window:.0f}s"
+          f"（先发文字再发图片，会在窗口内合并成一条任务）")
 
     # —— 离线演示 / 只消费队列 ——
     if args.demo or args.once:
@@ -234,6 +260,7 @@ def main(argv=None) -> int:
         print("\n退出中……")
     finally:
         worker.stop()
+        aggregator.close()          # 退出前把缓冲里的消息提交掉（不丢）
         channel.stop()
         queue.close()
     return 0
