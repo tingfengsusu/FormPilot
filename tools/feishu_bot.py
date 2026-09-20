@@ -44,6 +44,39 @@ from report.daily import build_daily_report, format_daily_report
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_PATH = os.path.join(_PROJECT_ROOT, "config", "gateway.yaml")
 _EXAMPLE_PATH = os.path.join(_PROJECT_ROOT, "config", "gateway.example.yaml")
+_LOCK_PATH = os.path.join(_PROJECT_ROOT, "data", "feishu_bot.lock")
+
+
+def _acquire_lock(force: bool = False) -> bool:
+    """单实例保护：飞书长连接会**把事件分摊到多个连接**，跑两个实例会互相抢消息
+    （实测踩过：旧进程没杀干净，消息被旧版本接走，排查半天）。
+
+    :return: True = 可以启动；False = 已有实例在跑
+    """
+    if os.path.exists(_LOCK_PATH) and not force:
+        try:
+            with open(_LOCK_PATH, "r", encoding="utf-8") as f:
+                info = f.read().strip()
+        except OSError:
+            info = ""
+        print("⚠ 检测到已有机器人实例在运行（data/feishu_bot.lock）：\n"
+              f"    {info}\n"
+              "  飞书会把事件分摊到多个长连接上，两个实例会互相抢消息、"
+              "导致消息被拆开处理。\n"
+              "  请先停掉旧实例（Windows: 结束对应的 python.exe 进程），"
+              "或加 --force 强制启动。")
+        return False
+    os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
+    with open(_LOCK_PATH, "w", encoding="utf-8") as f:
+        f.write(f"pid={os.getpid()} started={now_str()}")
+    return True
+
+
+def _release_lock() -> None:
+    try:
+        os.remove(_LOCK_PATH)
+    except OSError:
+        pass
 
 
 def _load_config() -> dict:
@@ -228,7 +261,14 @@ def main(argv=None) -> int:
                         help="把现有任务消费完就退出（不连飞书）")
     parser.add_argument("--max-tasks", type=int, default=0, metavar="N",
                         help="最多处理 N 条（0 = 不限制）")
+    parser.add_argument("--force", action="store_true",
+                        help="已有实例在跑时也强制启动（会互相抢消息，慎用）")
     args = parser.parse_args(argv)
+
+    # —— 真连飞书前做单实例检查（离线演示/只消费队列不受影响）——
+    if not (args.demo or args.once):
+        if not _acquire_lock(force=args.force):
+            return 2
 
     queue, executor, channel, config, ledger = _build(args)
     if args.status or args.report is not None:
@@ -297,6 +337,7 @@ def main(argv=None) -> int:
         worker.stop()
         aggregator.close()          # 退出前把缓冲里的消息提交掉（不丢）
         channel.stop()
+        _release_lock()
         queue.close()
     return 0
 

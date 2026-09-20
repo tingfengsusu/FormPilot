@@ -28,3 +28,6 @@ data/
 # （batch/crypto.py 默认路径就是 config/.id_card.key）
 config/.id_card.key
 config/.id_card.key.*
+
+# 机器人单实例锁文件（运行时产物）
+data/feishu_bot.lock

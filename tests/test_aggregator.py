@@ -210,6 +210,27 @@ def test_cli_replies_hint_when_incomplete():
     assert replies and "品种名" in replies[0]
 
 
+def test_single_instance_lock():
+    """单实例保护：飞书会把事件分摊到多个长连接，跑两个实例会互相抢消息。"""
+    import tempfile
+
+    import tools.feishu_bot as bot
+
+    original = bot._LOCK_PATH
+    with tempfile.TemporaryDirectory() as td:
+        bot._LOCK_PATH = os.path.join(td, "feishu_bot.lock")
+        try:
+            assert bot._acquire_lock() is True          # 首次拿到
+            assert os.path.exists(bot._LOCK_PATH)
+            assert bot._acquire_lock() is False         # 第二次被拒（并有提示）
+            assert bot._acquire_lock(force=True) is True
+            bot._release_lock()
+            assert not os.path.exists(bot._LOCK_PATH)
+            assert bot._acquire_lock() is True          # 释放后可再启动
+        finally:
+            bot._LOCK_PATH = original
+
+
 if __name__ == "__main__":
     test_merge_text_and_image()
     test_merge_order_does_not_matter()
@@ -223,4 +244,5 @@ if __name__ == "__main__":
     test_aggregator_close_processes_pending()
     test_cli_command_bypasses_aggregator()
     test_cli_replies_hint_when_incomplete()
+    test_single_instance_lock()
     print("test_aggregator.py 全部通过 ✓")
