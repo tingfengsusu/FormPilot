@@ -31,7 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yaml
 
-from executor.run import FormPilotExecutor, load_varieties
+from executor.run import (DEFAULT_WAIT_SECONDS, FormPilotExecutor,
+                           load_varieties)
 from gateway.aggregator import DEFAULT_HOLD_SECONDS, MessageAggregator
 from gateway.console import ConsoleChannel, make_demo_messages
 from gateway.feishu import FeishuChannel
@@ -135,8 +136,32 @@ def _load_config() -> dict:
     return {}
 
 
+def _push(queue: TaskQueue, channel, text: str, screenshot: str = "",
+          chat_id: str = "") -> None:
+    """把执行线程的进展回推给人（接飞书；没有通道时打印到控制台）。"""
+    if channel is None:
+        print(f"[bot] {text}")
+        return
+    from gateway.models import OutboundResult
+
+    target = chat_id or _last_chat_id(queue)
+    if not target:
+        print(f"[bot] （无会话）{text}")
+        return
+    try:
+        channel.reply(target, OutboundResult(ok=True, text=text,
+                                             screenshot=screenshot))
+    except Exception as e:  # noqa: BLE001 — 回推失败不影响执行
+        print(f"[bot] 回推失败：{e}")
+
+
+def _last_chat_id(queue: TaskQueue) -> str:
+    task = _current_task(queue)
+    return str(getattr(task, "chat_id", "") or "")
+
+
 def _build(args) -> tuple:
-    """按配置构造 队列 / 执行器 / 通道 / 台账。"""
+    """按配置构造 队列 / 通道 / 执行器 / 台账。"""
     config = _load_config()
     exec_cfg = config.get("executor") or {}
     storage = config.get("storage") or {}
@@ -149,16 +174,6 @@ def _build(args) -> tuple:
         ledger_cfg.get("manual_seconds_per_record")
         or DEFAULT_MANUAL_SECONDS))
 
-    screenshot_dir = storage.get("screenshot_dir") or "data/screenshots/gateway"
-    executor = FormPilotExecutor(
-        varieties=load_varieties(config),
-        screenshot_dir=screenshot_dir if os.path.isabs(screenshot_dir)
-        else os.path.join(_PROJECT_ROOT, screenshot_dir),
-        period_start_floor=str(exec_cfg.get("period_start_floor") or "tomorrow"),
-        headless=bool(exec_cfg.get("headless", True)),
-        submit=bool(exec_cfg.get("submit", False)),
-        keep_open_seconds=float(exec_cfg.get("keep_open_seconds", 0) or 0))
-
     if args.demo:
         channel = ConsoleChannel(messages=make_demo_messages(
             image_path=args.image, text=args.text, chat_id="demo-chat"),
@@ -170,6 +185,20 @@ def _build(args) -> tuple:
             app_secret=str(feishu_cfg.get("app_secret") or ""),
             log_level=str(feishu_cfg.get("log_level") or "INFO"),
             attachment_dir=os.path.join(_PROJECT_ROOT, "data", "inbox"))
+
+    screenshot_dir = storage.get("screenshot_dir") or "data/screenshots/gateway"
+    executor = FormPilotExecutor(
+        varieties=load_varieties(config),
+        screenshot_dir=screenshot_dir if os.path.isabs(screenshot_dir)
+        else os.path.join(_PROJECT_ROOT, screenshot_dir),
+        period_start_floor=str(exec_cfg.get("period_start_floor") or "tomorrow"),
+        headless=bool(exec_cfg.get("headless", True)),
+        submit=bool(exec_cfg.get("submit", False)),
+        keep_open_seconds=float(exec_cfg.get("keep_open_seconds", 0) or 0),
+        command_mailbox=queue,          # 人工指令信箱（「签好了」等）
+        on_event=lambda text, shot="", chat="": _push(queue, channel, text,
+                                                     shot, chat),
+        wait_seconds=float(exec_cfg.get("wait_seconds", DEFAULT_WAIT_SECONDS)))
     return queue, executor, channel, config, ledger
 
 
@@ -178,13 +207,38 @@ def _is_submit_command(text: str) -> bool:
     return text in ("提交", "/submit") or text.startswith("提交 ")
 
 
+#: 「签好了」这类人工指令 → 执行线程信箱里的动作。
+MANUAL_COMMANDS = {
+    "签好了": "sign_done",
+    "签名完成": "sign_done",
+    "付好了": "paid",
+    "支付完成": "paid",
+    "取消": "cancel",
+}
+
+
+def _manual_command(text: str) -> str:
+    """把消息映射成人工指令（没有则返回空串）。"""
+    return MANUAL_COMMANDS.get((text or "").strip(), "")
+
+
+def _is_manual_command(text: str) -> bool:
+    return bool(_manual_command(text))
+
+
+def _current_task(queue: TaskQueue):
+    """最近一条任务（人工指令默认作用在它身上）。"""
+    tasks = queue.list_tasks(limit=1)
+    return tasks[0] if tasks else None
+
+
 def _submit_target(queue: TaskQueue, text: str):
-    """解析要提交的任务：带编号就用编号，否则取最近一条已完成的。"""
+    """解析要提交的任务：带编号就用编号，否则取最近一条任务。"""
     parts = text.replace("提交", " ", 1).strip().lstrip("#").strip()
     if parts.isdigit():
         return queue.get(int(parts))
     done = queue.list_tasks(statuses=[st.DONE], limit=1)
-    return done[0] if done else None
+    return done[0] if done else _current_task(queue)
 
 
 def _run_submit(queue: TaskQueue, executor: FormPilotExecutor, channel,
@@ -235,6 +289,15 @@ def _handle_message(queue: TaskQueue, executor: FormPilotExecutor,
         report = build_daily_report(queue, ledger)
         _reply_text(queue, channel, message, format_daily_report(report))
         return
+    if _is_manual_command(text):
+        task = _current_task(queue)
+        if task is None:
+            _reply_text(queue, channel, message, "没有正在进行的任务")
+            return
+        queue.send_command(task.id, _manual_command(text))
+        _reply_text(queue, channel, message,
+                    f"收到「{text}」，已转给正在操作的任务 #{task.id}")
+        return
     if _is_submit_command(text):
         task = _submit_target(queue, text)
         if task is None:
@@ -284,8 +347,8 @@ def _make_on_message(queue: TaskQueue, executor: FormPilotExecutor,
     def complete_if_ready(message) -> bool:
         """够不够：有文字 + （品种要附件时有附件）。"""
         text = (message.text or "").strip()
-        if _is_status_command(text) or _is_report_command(text) \
-                or _is_submit_command(text):
+        if (_is_status_command(text) or _is_report_command(text)
+                or _is_submit_command(text) or _is_manual_command(text)):
             return True
         if not text:
             return False                        # 只有图片 → 等文字
@@ -317,7 +380,8 @@ def _make_on_message(queue: TaskQueue, executor: FormPilotExecutor,
     def on_message(message) -> None:
         text = (message.text or "").strip()
         is_command = (_is_status_command(text) or _is_report_command(text)
-                      or _is_submit_command(text)) and not message.attachments
+                      or _is_submit_command(text) or _is_manual_command(text)) \
+            and not message.attachments
         if is_command or hold_seconds <= 0:
             _handle_message(queue, executor, ledger, channel, message)
             return

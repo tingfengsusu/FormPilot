@@ -42,6 +42,14 @@ from orchestrator.worker import ExecResult
 #: 消息里的字段覆盖写法：``键=值``（中文键名，值不含空格/逗号）。
 _OVERRIDE_RE = re.compile(r"([\u4e00-\u9fa5A-Za-z_][\u4e00-\u9fa5A-Za-z0-9_]*)\s*=\s*([^\s，,]+)")
 
+#: 等人工操作的默认超时（秒）：签名 / 支付都在这段时间内完成。
+DEFAULT_WAIT_SECONDS = 900.0
+
+#: 人工指令。
+CMD_SIGN_DONE = "sign_done"      # 「签好了」→ 程序点下一步到支付页
+CMD_PAID = "paid"                # 「付好了」→ 程序收工关浏览器
+CMD_CANCEL = "cancel"            # 「取消」→ 程序收工关浏览器
+
 
 @dataclass
 class VarietyConfig:
@@ -55,6 +63,10 @@ class VarietyConfig:
     #: 自动补保险期间（起 = 页面允许的最早日期；止 = 起 + period_days 天）
     auto_period: bool = False
     period_days: int = 364
+    #: 签名页的「下一步/确认」按钮（提交后由人签字，签完发「签好了」→ 程序点它）
+    sign_confirm_button: str = ""
+    #: 支付页的「去支付/立即支付」按钮（点完一般出现二维码，回推给人扫码）
+    pay_button: str = ""
 
     @classmethod
     def from_dict(cls, keyword: str, data: Dict[str, Any]) -> "VarietyConfig":
@@ -67,6 +79,8 @@ class VarietyConfig:
                               (data.get("extra_properties") or {}).items()},
             auto_period=bool(data.get("auto_period", False)),
             period_days=int(data.get("period_days", 364)),
+            sign_confirm_button=str(data.get("sign_confirm_button") or ""),
+            pay_button=str(data.get("pay_button") or ""),
         )
 
 
@@ -80,14 +94,17 @@ class FormPilotExecutor:
                  period_start_floor: str = "tomorrow",
                  headless: bool = True,
                  submit: bool = False,
-                 keep_open_seconds: float = 0.0):
+                 keep_open_seconds: float = 0.0,
+                 command_mailbox: Any = None,
+                 on_event: Optional[Callable[[str, str], None]] = None,
+                 wait_seconds: float = DEFAULT_WAIT_SECONDS):
         self.varieties = dict(varieties or {})
         self.screenshot_dir = screenshot_dir or os.path.join("data", "screenshots")
         self._ocr_fn = ocr_fn
         self._fill_fn = fill_fn
         #: 保险期间起的最早日期（实测：投保页日期列从「明天」开始）
         self.period_start_floor = period_start_floor
-        #: 无头浏览器（默认）；设 False 可以**亲眼看到它填表**（本机窗口）
+        #: 无头浏览器（默认）；要让人**亲手签名**必须设 false
         self.headless = bool(headless)
         #: 是否点「我要投保」。**默认关闭**：提交是真实动作，且之后还有
         #: **手写签名**（投保人的真实意思表示，程序绝不代签）→ 由人在飞书里
@@ -95,6 +112,12 @@ class FormPilotExecutor:
         self.submit = bool(submit)
         #: 提交后保持浏览器打开的秒数（留给人签名/支付；0 = 立即关闭）
         self.keep_open_seconds = float(keep_open_seconds)
+        #: 人工指令信箱（``take_commands(task_id)`` → ["sign_done", ...]）：
+        #: 提交后程序**停在签名页等人**，人在飞书发「签好了」就往前推一步
+        self.command_mailbox = command_mailbox
+        #: 回推回调 ``on_event(text, screenshot)``（接到飞书/控制台）
+        self.on_event = on_event
+        self.wait_seconds = float(wait_seconds)
 
     # ------------------------------------------------------------------
     # 对外：worker 的 executor
@@ -110,6 +133,8 @@ class FormPilotExecutor:
         import time
 
         do_submit = self.submit if submit is None else bool(submit)
+        #: 回推时要带会话 id（on_event 用它找飞书会话）
+        self._chat_id = str(getattr(task, "chat_id", "") or "")
 
         config = self.resolve_variety(task.variety or task.message_text)
         if config is None:
@@ -157,7 +182,8 @@ class FormPilotExecutor:
 
         # 3) FILLING + 4) VERIFYING（+ 5) 可选提交；都在同一个浏览器会话里）
         started = time.time()
-        outcome = self._fill(config, values, task, do_submit=do_submit)
+        outcome = self._fill(config, values, task, do_submit=do_submit,
+                             note_step=note_step)
         report = outcome.get("report") or []
         issues = outcome.get("issues") or []
         problems = [r for r in report
@@ -289,7 +315,8 @@ class FormPilotExecutor:
                 "保险期间止": end.isoformat()}
 
     def _fill(self, config: VarietyConfig, values: Dict[str, Any],
-              task: Any, do_submit: bool = False) -> Dict[str, Any]:
+              task: Any, do_submit: bool = False,
+              note_step: Optional[Callable[..., None]] = None) -> Dict[str, Any]:
         """填表 + 回读 + 截图（+ 可选点提交）。
 
         **浏览器生命周期都在这里**：提交必须在同一个浏览器会话里做
@@ -349,12 +376,113 @@ class FormPilotExecutor:
                         self._submit(page, product, task)
                         submitted = True
                         screenshot = self._submitted_screenshot(page, task) or screenshot
-                    except Exception as e:  # noqa: BLE001 — 提交失败要说清，不能让异常裸奔
+                        # 提交后停在签名页等人：人在飞书发「签好了」再往前推
+                        self._await_human(page, product, config, task,
+                                          screenshot, note_step
+                                          or (lambda *a, **k: None))
+                    except Exception as e:  # noqa: BLE001 — 提交失败要说清
                         submit_error = f"点提交失败：{e}"
             finally:
                 browser.close()
         return {"report": report, "issues": issues, "screenshot": screenshot,
                 "submitted": submitted, "submit_error": submit_error}
+
+    def _await_human(self, page: Any, product: Any, config: VarietyConfig,
+                     task: Any, screenshot: str,
+                     note_step: Callable[..., None]) -> None:
+        """提交后停在签名页，等人工在飞书里的指令，一步步往前推。
+
+        分工（使用者确认的流程）：
+
+            程序：填表 → 点提交 → **停在签名页**
+            人　：在**本机浏览器里手写签名**（投保人的真实意思表示，程序不代签）
+            人　：飞书发「签好了」
+            程序：点「下一步」→ 到支付页 → 点「去支付」→ 截**二维码**回推
+            人　：手机扫码支付 → 飞书发「付好了」
+            程序：收工（关浏览器）
+
+        没配 ``sign_confirm_button`` / ``pay_button`` 时只截图并提示下一步，
+        不会瞎点（页面结构未知时宁可少做）。
+        """
+        import time
+
+        if self.command_mailbox is None or self.headless:
+            # 无头模式下没窗口可签名 → 只回推截图，由人自行处理
+            self._emit("已提交。请在浏览器里完成【手写签名】与支付"
+                       "（程序不代签、不代付）", screenshot)
+            return
+
+        self._emit("已点提交，浏览器停在**签名页**：请在本机窗口里手写签名，"
+                   "签完在飞书回一句「签好了」", screenshot)
+        deadline = time.time() + self.wait_seconds
+        paid = False
+        while time.time() < deadline:
+            commands = self.command_mailbox.take_commands(task.id) or []
+            if not commands:
+                time.sleep(1.0)
+                continue
+            for command in commands:
+                if command == CMD_CANCEL:
+                    self._emit("已取消（浏览器关闭）", "")
+                    return
+                if command == CMD_PAID:
+                    self._emit("收到「付好了」，收工 ✅", "")
+                    paid = True
+                    break
+                if command == CMD_SIGN_DONE:
+                    shot = self._advance_to_payment(page, config, task, note_step)
+                    if shot:
+                        self._emit("签名已完成，已到支付页。**扫码支付后**"
+                                   "回一句「付好了」", shot)
+                    else:
+                        self._emit("签名已完成。请在本机浏览器里继续完成支付"
+                                   "（程序不代付）", "")
+            if paid:
+                return
+        self._emit(f"等待人工操作超时（{self.wait_seconds:.0f}s），浏览器已关闭", "")
+
+    def _advance_to_payment(self, page: Any, config: VarietyConfig, task: Any,
+                            note_step: Callable[..., None]) -> str:
+        """「签好了」之后：点签名页下一步 → 点支付 → 截二维码，返回截图路径。"""
+        from page.overlay import click_with_guard
+
+        if config.sign_confirm_button:
+            try:
+                click_with_guard(page, config.sign_confirm_button, timeout=8000)
+                page.wait_for_timeout(2500)
+                note_step("SIGNED", ok=True, detail="已点签名页的「下一步」")
+            except Exception as e:  # noqa: BLE001
+                note_step("SIGNED", ok=False, detail=f"点下一步失败：{e}")
+                return self._shot(page, task, "payment")
+        if config.pay_button:
+            try:
+                click_with_guard(page, config.pay_button, timeout=8000)
+                page.wait_for_timeout(3000)
+                note_step("PAY_PAGE", ok=True, detail="已点支付按钮")
+            except Exception as e:  # noqa: BLE001
+                note_step("PAY_PAGE", ok=False, detail=f"点支付失败：{e}")
+                return self._shot(page, task, "payment")
+        return self._shot(page, task, "payment")
+
+    def _shot(self, page: Any, task: Any, tag: str) -> str:
+        path = os.path.join(self.screenshot_dir,
+                            f"{tag}_{getattr(task, 'id', 0)}.png")
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            page.screenshot(path=path, full_page=False)
+            return path
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _emit(self, text: str, screenshot: str = "") -> None:
+        """回推给人（接到飞书或控制台）。"""
+        print(f"[executor] {text}")
+        if self.on_event is not None:
+            try:
+                self.on_event(text, screenshot,
+                              getattr(self, "_chat_id", ""))
+            except Exception as e:  # noqa: BLE001
+                print(f"[executor] 回推失败：{e}")
 
     def _submit(self, page: Any, product: Any, task: Any) -> None:
         """点「我要投保」：**只点这一下**。

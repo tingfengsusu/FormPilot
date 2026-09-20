@@ -66,8 +66,18 @@ CREATE TABLE IF NOT EXISTS ledger (
   created_at     TEXT NOT NULL
 );
 
+-- 人工指令信箱：执行线程在「等签名/等支付」时轮询它（见 executor/run.py）
+CREATE TABLE IF NOT EXISTS session_cmd (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    INTEGER NOT NULL,
+  action     TEXT NOT NULL,               -- sign_done / paid / cancel
+  consumed   INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_task_status ON task(status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_task_step   ON task_step(task_id);
+CREATE INDEX IF NOT EXISTS idx_session_cmd ON session_cmd(task_id, consumed);
 """
 
 
@@ -288,6 +298,30 @@ class TaskQueue:
 
     # ------------------------------------------------------------------
     # 内部
+    # ------------------------------------------------------------------
+    # 人工指令信箱（执行线程等签名/等支付时用）
+    # ------------------------------------------------------------------
+    def send_command(self, task_id: int, action: str) -> None:
+        """人工发一条指令给正在等待的执行线程（sign_done / paid / cancel）。"""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO session_cmd (task_id, action, consumed, created_at)"
+                " VALUES (?, ?, 0, ?)", (int(task_id), str(action), now_str()))
+            self._conn.commit()
+
+    def take_commands(self, task_id: int) -> List[str]:
+        """取走该任务未消费的指令（取走即标记已消费）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, action FROM session_cmd WHERE task_id = ? AND"
+                " consumed = 0 ORDER BY id", (int(task_id),)).fetchall()
+            if rows:
+                self._conn.executemany(
+                    "UPDATE session_cmd SET consumed = 1 WHERE id = ?",
+                    [(row["id"],) for row in rows])
+                self._conn.commit()
+        return [row["action"] for row in rows]
+
     # ------------------------------------------------------------------
     def _query(self, sql: str, params: tuple = ()) -> List[sqlite3.Row]:
         with self._lock:
