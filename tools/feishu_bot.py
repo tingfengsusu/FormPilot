@@ -47,25 +47,66 @@ _EXAMPLE_PATH = os.path.join(_PROJECT_ROOT, "config", "gateway.example.yaml")
 _LOCK_PATH = os.path.join(_PROJECT_ROOT, "data", "feishu_bot.lock")
 
 
+def _pid_alive(pid: int) -> bool:
+    """进程是否还活着（用于识别残留锁文件）。判断不了时保守返回 True。"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import subprocess
+
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                                 capture_output=True, text=True,
+                                 timeout=10).stdout
+            return str(pid) in (out or "")
+        except Exception:  # noqa: BLE001
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _read_lock_pid() -> int:
+    try:
+        with open(_LOCK_PATH, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return 0
+    for part in text.replace(";", " ").split():
+        if part.startswith("pid="):
+            try:
+                return int(part[4:])
+            except ValueError:
+                return 0
+    return 0
+
+
 def _acquire_lock(force: bool = False) -> bool:
     """单实例保护：飞书长连接会**把事件分摊到多个连接**，跑两个实例会互相抢消息
     （实测踩过：旧进程没杀干净，消息被旧版本接走，排查半天）。
 
-    :return: True = 可以启动；False = 已有实例在跑
+    锁文件里的进程已经不在了 → 视为残留，**自动接管**（不用手动删/加 --force）。
+
+    :return: True = 可以启动；False = 确实有实例在跑
     """
     if os.path.exists(_LOCK_PATH) and not force:
-        try:
-            with open(_LOCK_PATH, "r", encoding="utf-8") as f:
-                info = f.read().strip()
-        except OSError:
-            info = ""
-        print("⚠ 检测到已有机器人实例在运行（data/feishu_bot.lock）：\n"
-              f"    {info}\n"
-              "  飞书会把事件分摊到多个长连接上，两个实例会互相抢消息、"
-              "导致消息被拆开处理。\n"
-              "  请先停掉旧实例（Windows: 结束对应的 python.exe 进程），"
-              "或加 --force 强制启动。")
-        return False
+        pid = _read_lock_pid()
+        if pid and _pid_alive(pid):
+            try:
+                with open(_LOCK_PATH, "r", encoding="utf-8") as f:
+                    info = f.read().strip()
+            except OSError:
+                info = ""
+            print("⚠ 检测到已有机器人实例在运行（data/feishu_bot.lock）：\n"
+                  f"    {info}\n"
+                  "  飞书会把事件分摊到多个长连接上，两个实例会互相抢消息、"
+                  "导致消息被拆开处理。\n"
+                  "  请先停掉旧实例（Windows: 结束对应的 python.exe 进程），"
+                  "或加 --force 强制启动。")
+            return False
+        print(f"ℹ 上次的锁是残留（pid={pid} 已不在），自动接管启动。")
     os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
     with open(_LOCK_PATH, "w", encoding="utf-8") as f:
         f.write(f"pid={os.getpid()} started={now_str()}")

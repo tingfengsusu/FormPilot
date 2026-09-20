@@ -301,11 +301,18 @@ def test_single_instance_lock():
         try:
             assert bot._acquire_lock() is True          # 首次拿到
             assert os.path.exists(bot._LOCK_PATH)
-            assert bot._acquire_lock() is False         # 第二次被拒（并有提示）
+            assert bot._acquire_lock() is False         # 同一个进程还活着 → 拒绝
             assert bot._acquire_lock(force=True) is True
             bot._release_lock()
             assert not os.path.exists(bot._LOCK_PATH)
             assert bot._acquire_lock() is True          # 释放后可再启动
+
+            # 残留锁（进程已不在）→ 自动接管，不用手动清理
+            bot._release_lock()
+            with open(bot._LOCK_PATH, "w", encoding="utf-8") as f:
+                f.write("pid=999999 started=2026-09-20 11:00:00")
+            assert bot._pid_alive(999999) is False
+            assert bot._acquire_lock() is True          # 自动接管
         finally:
             bot._LOCK_PATH = original
 
