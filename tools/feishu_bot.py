@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import yaml
 
 from executor.run import FormPilotExecutor, load_varieties
-from gateway.aggregator import DEFAULT_WINDOW_SECONDS, MessageAggregator
+from gateway.aggregator import DEFAULT_HOLD_SECONDS, MessageAggregator
 from gateway.console import ConsoleChannel, make_demo_messages
 from gateway.feishu import FeishuChannel
 from ledger import DEFAULT_MANUAL_SECONDS, Ledger
@@ -116,19 +116,55 @@ def _handle_message(queue: TaskQueue, executor: FormPilotExecutor,
           f"品种={task.variety or '未识别'} 附件={len(message.attachments)}")
 
 
+def _needs_attachment(executor: FormPilotExecutor, text: str) -> bool:
+    """这条消息对应的品种是否必须有附件（OCR 类品种都要）。"""
+    variety = executor.resolve_variety(text) if executor is not None else None
+    if variety is None:
+        return True          # 认不出品种：等附件意义不大，但先按「要附件」处理
+    return bool(variety.field_map)
+
+
 def _make_on_message(queue: TaskQueue, executor: FormPilotExecutor,
-                     ledger: Ledger, channel, window_seconds: float):
-    """把「收消息」包一层合并器（并让命令消息立即处理、不进缓冲）。"""
+                     ledger: Ledger, channel, hold_seconds: float):
+    """把「收消息」包一层合并器（命令立即处理；缺附件/缺文字时提示）。"""
+
+    def complete_if_ready(message) -> bool:
+        """够不够：有文字 + （品种要附件时有附件）。"""
+        text = (message.text or "").strip()
+        if _is_status_command(text) or _is_report_command(text):
+            return True
+        if not text:
+            return False                        # 只有图片 → 等文字
+        if _needs_attachment(executor, text):
+            return bool(message.attachments)     # 等附件
+        return True
+
+    def on_incomplete(message, reason: str) -> None:
+        """超时仍不完整 → 回一句明确提示（不建任务，别让它跑一半失败）。"""
+        text = (message.text or "").strip()
+        if not text:
+            hint = ("收到图片，但没看到品种名 —— 请再发一条文字说明品种，"
+                    "例如「学平险」或「本地测试」")
+        elif _needs_attachment(executor, text):
+            hint = (f"收到「{text}」，但还没收到附件 —— 请把证件照（或台账文件）"
+                    f"一起发来，我会自动处理")
+        else:
+            hint = f"没识别出品种：请在消息里带上品种关键词（可用：{'、'.join(executor.varieties)}）"
+        _reply_text(queue, channel, message, hint)
+        print(f"[{now_str()}] 消息不完整（{reason}）：{hint}")
+
     aggregator = MessageAggregator(
         on_complete=lambda msg: _handle_message(queue, executor, ledger,
                                                 channel, msg),
-        window_seconds=window_seconds)
+        is_complete=complete_if_ready,
+        on_incomplete=on_incomplete,
+        hold_seconds=hold_seconds)
 
     def on_message(message) -> None:
         text = (message.text or "").strip()
         is_command = (_is_status_command(text) or _is_report_command(text)) \
             and not message.attachments
-        if is_command or window_seconds <= 0:
+        if is_command or hold_seconds <= 0:
             _handle_message(queue, executor, ledger, channel, message)
             return
         aggregator.add(message)
@@ -215,14 +251,13 @@ def main(argv=None) -> int:
                     alert_mention=str(alert_cfg.get("mention") or ""),
                     )
     max_tasks = args.max_tasks or None
-    # 飞书不支持「文本+图片」同条消息（会推两条事件）→ 按窗口合并成一条任务
+    # 飞书不支持「文本+图片」同条消息（会推两条事件）→ 等对方补全后合并成一条任务
     feishu_cfg = config.get("feishu") or {}
-    window = float(feishu_cfg.get("merge_window_seconds",
-                                  DEFAULT_WINDOW_SECONDS))
+    hold_seconds = float(feishu_cfg.get("merge_hold_seconds",
+                                        DEFAULT_HOLD_SECONDS))
     on_message, aggregator = _make_on_message(queue, executor, ledger, channel,
-                                              window)
-    print(f"消息合并窗口：{window:.0f}s"
-          f"（先发文字再发图片，会在窗口内合并成一条任务）")
+                                              hold_seconds)
+    print(f"消息合并：文字与附件可以分两条发（最多等 {hold_seconds:.0f}s 补全）")
 
     # —— 离线演示 / 只消费队列 ——
     if args.demo or args.once:
