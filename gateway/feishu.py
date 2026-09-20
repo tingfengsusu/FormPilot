@@ -217,6 +217,14 @@ class FeishuChannel(Channel):
     def send_text(self, chat_id: str, text: str) -> None:
         self._create_message(chat_id, "text", {"text": text})
 
+    def format_mention(self, user_id: str) -> str:
+        """飞书的 @ 标记：``<at user_id="ou_xxx"></at>``；``all`` = @所有人。"""
+        if not user_id:
+            return ""
+        if user_id in ("all", "所有人"):
+            return '<at user_id="all"></at>'
+        return f'<at user_id="{user_id}"></at>'
+
     def send_image(self, chat_id: str, image_path: str) -> None:
         from lark_oapi.api.im.v1 import (CreateImageRequest,
                                          CreateImageRequestBody)

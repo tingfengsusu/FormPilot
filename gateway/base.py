@@ -79,6 +79,13 @@ class Channel:
         """回推图片（录入后截图）。默认实现：降级为文本提示。"""
         self.send_text(chat_id, f"（截图）{image_path}")
 
+    def format_mention(self, user_id: str) -> str:
+        """把用户标识渲染成平台自己的 @ 标记（告警要 @负责人）。
+
+        飞书是 ``<at user_id="ou_xxx"></at>``，控制台就是 ``@ou_xxx``。
+        """
+        return f"@{user_id}" if user_id else ""
+
     def reply(self, chat_id: str, result: OutboundResult) -> None:
         """回推一条执行结果：文本 + （有截图时）图片。"""
         self.send_text(chat_id, result.format_text())

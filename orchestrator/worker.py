@@ -20,17 +20,20 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from gateway.models import OutboundResult
+from report.alert import format_alert
 
 from . import state as st
 from .queue import Task, TaskQueue
 
-#: 执行器的返回：ok / 摘要 / 截图 / 失败原因。
+#: 执行器的返回：ok / 摘要 / 截图 / 失败原因 / 台账用的人与字段数。
 @dataclass
 class ExecResult:
     ok: bool = False
     summary: str = ""
     screenshot: str = ""
     error: str = ""
+    applicant: str = ""            # 被保人/客户名（写台账）
+    filled_fields: int = 0         # 实际填了几个字段（写台账）
 
     @property
     def text(self) -> str:
@@ -66,7 +69,8 @@ class Worker:
     def __init__(self, queue: TaskQueue, executor: Executor,
                  channel: Any = None, max_retries: int = 3,
                  retry_backoff_seconds: float = 5.0,
-                 sleep: Optional[Callable[[float], None]] = None):
+                 sleep: Optional[Callable[[float], None]] = None,
+                 ledger: Any = None, alert_mention: str = ""):
         self.queue = queue
         self.executor = executor
         self.channel = channel
@@ -74,6 +78,10 @@ class Worker:
         self.retry_backoff_seconds = float(retry_backoff_seconds)
         self._sleep = sleep or time.sleep
         self._stop = False
+        #: 台账（写入提效数据；可为 None）
+        self.ledger = ledger
+        #: 告警时 @谁（飞书 open_id；"all" = 所有人）
+        self.alert_mention = alert_mention
 
     # ------------------------------------------------------------------
     def run_once(self) -> Optional[Dict[str, Any]]:
@@ -94,9 +102,10 @@ class Worker:
         record: Dict[str, Any] = {"task_id": task.id, "elapsed": elapsed}
 
         if result.ok:
-            self.queue.set_status(task.id, st.DONE,
-                                  note=f"完成：{result.summary or '已填写'}",
-                                  result=result.summary, screenshot=result.screenshot)
+            self._advance_to(task.id, st.DONE,
+                             note=f"完成：{result.summary or '已填写'}",
+                             result=result.summary, screenshot=result.screenshot)
+            self._record_ledger(task, result, elapsed)
             if self.channel is not None:
                 self._reply(task, OutboundResult(
                     ok=True, text=f"{result.summary or '已填完'}"
@@ -121,11 +130,56 @@ class Worker:
                                   result=result.error)
             if self.channel is not None:
                 self._reply(task, OutboundResult(
-                    ok=False, text=f"处理失败（已重试 {self.max_retries} 次）："
-                                   f"{result.error}——需要人工介入",
+                    ok=False, text=format_alert(
+                        f"处理失败（已重试 {self.max_retries} 次）：{result.error}"
+                        f"——需要人工介入",
+                        mention=self._mention(), task_id=task.id),
                     task_id=task.id))
             record["status"] = st.ALERT
         return record
+
+    def _advance_to(self, task_id: int, target: str, **kwargs) -> None:
+        """把任务推进到 ``target``（必要时**补齐执行器没报的中间状态**）。
+
+        执行器正常会把 OCR→MAPPING→FILLING→VERIFYING 都报一遍；但注入的
+        执行器（测试、第三方）可能只报一部分——这时直接设 DONE 会被状态机
+        拒绝（实测踩过：OCR → DONE 非法），把成功判成失败。所以这里逐级补齐。
+        """
+        chain = [st.OCR, st.MAPPING, st.FILLING, st.VERIFYING]
+        for _ in range(len(chain) + 2):
+            current = self.queue.get(task_id)
+            if current is None:
+                return
+            if st.can_task_transition(current.status, target):
+                self.queue.set_status(task_id, target, **kwargs)
+                return
+            nxt = next((status for status in chain
+                        if st.can_task_transition(current.status, status)), None)
+            if nxt is None:
+                self.queue.set_status(task_id, target, **kwargs)
+                return
+            self.queue.set_status(task_id, nxt, note="补齐步骤（执行器未报）")
+
+    def _mention(self) -> str:
+        """告警里的 @ 标记（由通道渲染成平台自己的写法）。"""
+        if not self.alert_mention or self.channel is None:
+            return ""
+        formatter = getattr(self.channel, "format_mention", None)
+        return formatter(self.alert_mention) if formatter else \
+            f"@{self.alert_mention}"
+
+    def _record_ledger(self, task: Task, result: ExecResult,
+                       elapsed: float) -> None:
+        """写台账（提效数据）：人工预估耗时 vs 实际自动耗时。"""
+        if self.ledger is None:
+            return
+        try:
+            self.ledger.record(
+                task_id=task.id, applicant=result.applicant,
+                variety=task.variety or "", filled_fields=result.filled_fields,
+                auto_seconds=elapsed)
+        except Exception as e:  # noqa: BLE001 — 台账失败不能影响任务结果
+            print(f"[worker] 写台账失败：{e}")
 
     def run_forever(self, poll_seconds: float = 1.0,
                     max_tasks: Optional[int] = None) -> WorkerReport:

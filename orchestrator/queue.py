@@ -257,15 +257,21 @@ class TaskQueue:
         return Task.from_row(row) if row else None
 
     def list_tasks(self, statuses: Optional[List[str]] = None,
-                   limit: int = 50) -> List[Task]:
+                   limit: int = 50, day: str = "") -> List[Task]:
+        """按状态/日期取任务（``day`` = ``YYYY-MM-DD``，按创建时间过滤）。"""
+        clauses: List[str] = []
+        params: List[Any] = []
         if statuses:
             marks = ", ".join("?" for _ in statuses)
-            rows = self._query(
-                f"SELECT * FROM task WHERE status IN ({marks}) ORDER BY id DESC"
-                f" LIMIT {int(limit)}", tuple(statuses))
-        else:
-            rows = self._query(
-                f"SELECT * FROM task ORDER BY id DESC LIMIT {int(limit)}")
+            clauses.append(f"status IN ({marks})")
+            params.extend(statuses)
+        if day:
+            clauses.append("created_at LIKE ?")
+            params.append(f"{day}%")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._query(
+            f"SELECT * FROM task {where} ORDER BY id DESC LIMIT {int(limit)}",
+            tuple(params))
         return [Task.from_row(r) for r in rows]
 
     def count_by_status(self) -> Dict[str, int]:

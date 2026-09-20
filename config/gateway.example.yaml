@@ -23,6 +23,16 @@ worker:
   max_retries: 3              # 用尽 → ALERT（异常预警）
   retry_backoff_seconds: 5    # 指数退避：5s / 10s / 20s
 
+# —— 异常预警（重试耗尽 / 连续失败时 @负责人）——
+alert:
+  mention: ""                 # 飞书 open_id（填 all = @所有人）；留空只发文本
+  consecutive_failures: 3     # 连续失败多少条 → 额外告警一次
+
+# —— 台账（提效数据：设计文档第七节的 manual_seconds / auto_seconds）——
+ledger:
+  manual_seconds_per_record: 240   # 人工逐字段录入一条的预估耗时（秒）
+                                   # 报表会算「平均每单省 X 分钟 / 累计省 Y 小时」
+
 # —— 品种：消息文本里的关键词 → 用哪个品种、哪个来源识别附件、字段怎么映射 ——
 # 发「学平险」+ 一张证件照 → 自动识别 → 填投保页 → 回推截图
 varieties:

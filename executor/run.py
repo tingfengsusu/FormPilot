@@ -124,7 +124,9 @@ class FormPilotExecutor:
         return ExecResult(
             ok=True,
             summary=f"已填完 {len(filled)} 个字段（品种：{config.product}）",
-            screenshot=outcome.get("screenshot", ""))
+            screenshot=outcome.get("screenshot", ""),
+            applicant=str(fields.get("姓名") or values.get("学生姓名") or ""),
+            filled_fields=len(filled))
 
     # ------------------------------------------------------------------
     # 品种匹配
