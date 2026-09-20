@@ -78,7 +78,9 @@ class FormPilotExecutor:
                  ocr_fn: Optional[Callable[[str, str], Dict[str, Any]]] = None,
                  fill_fn: Optional[Callable[..., Dict[str, Any]]] = None,
                  period_start_floor: str = "tomorrow",
-                 headless: bool = True):
+                 headless: bool = True,
+                 submit: bool = False,
+                 keep_open_seconds: float = 0.0):
         self.varieties = dict(varieties or {})
         self.screenshot_dir = screenshot_dir or os.path.join("data", "screenshots")
         self._ocr_fn = ocr_fn
@@ -87,12 +89,27 @@ class FormPilotExecutor:
         self.period_start_floor = period_start_floor
         #: 无头浏览器（默认）；设 False 可以**亲眼看到它填表**（本机窗口）
         self.headless = bool(headless)
+        #: 是否点「我要投保」。**默认关闭**：提交是真实动作，且之后还有
+        #: **手写签名**（投保人的真实意思表示，程序绝不代签）→ 由人在飞书里
+        #: 发「提交」指令显式触发（见 tools/feishu_bot.py）
+        self.submit = bool(submit)
+        #: 提交后保持浏览器打开的秒数（留给人签名/支付；0 = 立即关闭）
+        self.keep_open_seconds = float(keep_open_seconds)
 
     # ------------------------------------------------------------------
     # 对外：worker 的 executor
     # ------------------------------------------------------------------
-    def __call__(self, task: Any, note_step: Callable[..., None]) -> ExecResult:
+    def __call__(self, task: Any, note_step: Callable[..., None],
+                 submit: Optional[bool] = None) -> ExecResult:
+        """执行一条任务。
+
+        :param submit: 是否点提交（None = 用构造时的配置）。人工在飞书里发
+            「提交」指令时会传 True —— 提交之后是**手写签名**，
+            签名与支付永远由人完成（程序不代签、不代付）
+        """
         import time
+
+        do_submit = self.submit if submit is None else bool(submit)
 
         config = self.resolve_variety(task.variety or task.message_text)
         if config is None:
@@ -138,9 +155,9 @@ class FormPilotExecutor:
             return ExecResult(ok=False, error=(
                 "字段映射结果为空——请检查 gateway.yaml 的 varieties.field_map"))
 
-        # 3) FILLING + 4) VERIFYING（FormFiller 内部填完就回读）
+        # 3) FILLING + 4) VERIFYING（+ 5) 可选提交；都在同一个浏览器会话里）
         started = time.time()
-        outcome = self._fill(config, values, task)
+        outcome = self._fill(config, values, task, do_submit=do_submit)
         report = outcome.get("report") or []
         issues = outcome.get("issues") or []
         problems = [r for r in report
@@ -160,9 +177,25 @@ class FormPilotExecutor:
                               screenshot=outcome.get("screenshot", ""))
 
         filled = [r for r in report if str(r.get("status")) == "filled"]
+        submit_error = str(outcome.get("submit_error") or "")
+        if submit_error:
+            note_step("SUBMITTED", ok=False, detail=submit_error)
+            return ExecResult(ok=False, error=submit_error,
+                              screenshot=outcome.get("screenshot", ""),
+                              applicant=str(fields.get("姓名")
+                                            or values.get("学生姓名") or ""),
+                              filled_fields=len(filled))
+        submitted = bool(outcome.get("submitted"))
+        if submitted:
+            note_step("SUBMITTED", ok=True,
+                      detail="已点提交；后续手写签名与支付由人工完成"
+                             "（程序不代签、不代付）")
+        summary = (f"已提交「{config.product}」（填了 {len(filled)} 个字段）"
+                   f"——请完成手写签名与支付" if submitted else
+                   f"已填完 {len(filled)} 个字段（品种：{config.product}）")
         return ExecResult(
             ok=True,
-            summary=f"已填完 {len(filled)} 个字段（品种：{config.product}）",
+            summary=summary,
             screenshot=outcome.get("screenshot", ""),
             applicant=str(fields.get("姓名") or values.get("学生姓名") or ""),
             filled_fields=len(filled))
@@ -256,11 +289,13 @@ class FormPilotExecutor:
                 "保险期间止": end.isoformat()}
 
     def _fill(self, config: VarietyConfig, values: Dict[str, Any],
-              task: Any) -> Dict[str, Any]:
-        """填表 + 回读 + 截图（默认走真实 Playwright，headless）。
+              task: Any, do_submit: bool = False) -> Dict[str, Any]:
+        """填表 + 回读 + 截图（+ 可选点提交）。
 
-        设计文档说消息驱动跑在「一直开着的机器」上 → 无头模式；
-        截图写给回推用（一张图让人一眼看出填得对不对）。
+        **浏览器生命周期都在这里**：提交必须在同一个浏览器会话里做
+        （表单状态在浏览器里，不在投保系统服务器上），所以提交也放在
+        ``with sync_playwright()`` 块内 —— 点完提交后按
+        ``keep_open_seconds`` 保持页面打开，留给人手写签名与支付。
         """
         if self._fill_fn is not None:
             return self._fill_fn(config, values, task)
@@ -273,7 +308,7 @@ class FormPilotExecutor:
         if product is None:
             return {"report": [{"property": "(品种)", "status": "error",
                                 "message": f"未找到品种 {config.product}"}],
-                    "issues": [], "screenshot": ""}
+                    "issues": [], "screenshot": "", "submitted": False}
 
         pool = PropertyPool()
         pool.feed_dict(values)
@@ -281,16 +316,17 @@ class FormPilotExecutor:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
-            # 没装 Playwright：退回「值可用性检查」的模拟填表（便于离线验证）
+            # 没装 Playwright：退回「值可用性检查」的模拟填表（不支持提交）
             filler = FormFiller(product, pool, browser_hold_seconds=0)
             report = filler.fill(headless=True)
             return {"report": report,
                     "issues": getattr(filler, "_last_issues", []),
-                    "screenshot": ""}
+                    "screenshot": "", "submitted": False}
 
         from page.browser_context import create_context
 
-        screenshot = ""
+        screenshot, submitted = "", False
+        submit_error = ""
         report: List[Dict[str, Any]] = []
         issues: List[Dict[str, Any]] = []
         with sync_playwright() as p:
@@ -304,9 +340,45 @@ class FormPilotExecutor:
                 report = filler.fill_on_page(page)
                 issues = getattr(filler, "_last_issues", [])
                 screenshot = self._screenshot(page, task)
+
+                problems = [r for r in report
+                            if str(r.get("status")) in ("error", "missing",
+                                                        "mismatch")]
+                if do_submit and not problems:
+                    try:
+                        self._submit(page, product, task)
+                        submitted = True
+                        screenshot = self._submitted_screenshot(page, task) or screenshot
+                    except Exception as e:  # noqa: BLE001 — 提交失败要说清，不能让异常裸奔
+                        submit_error = f"点提交失败：{e}"
             finally:
                 browser.close()
-        return {"report": report, "issues": issues, "screenshot": screenshot}
+        return {"report": report, "issues": issues, "screenshot": screenshot,
+                "submitted": submitted, "submit_error": submit_error}
+
+    def _submit(self, page: Any, product: Any, task: Any) -> None:
+        """点「我要投保」：**只点这一下**。
+
+        提交之后是手写签名页 —— 签名是投保人的真实意思表示，程序**绝不代签**；
+        支付同理。所以点完就按 ``keep_open_seconds`` 把页面留在那儿给人操作。
+        """
+        from page.overlay import click_with_guard
+
+        click_with_guard(page, product.submit_button, timeout=8000)
+        page.wait_for_timeout(3000)          # 等跳转到签名页
+        if self.keep_open_seconds > 0 and not self.headless:
+            page.wait_for_timeout(int(self.keep_open_seconds * 1000))
+
+    def _submitted_screenshot(self, page: Any, task: Any) -> str:
+        """提交后（多半是签名页）再截一张，回推给人看现在到哪一步。"""
+        path = os.path.join(self.screenshot_dir,
+                            f"submitted_{getattr(task, 'id', 0)}.png")
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            page.screenshot(path=path, full_page=False)
+            return path
+        except Exception:  # noqa: BLE001
+            return ""
 
     def _screenshot(self, page: Any, task: Any) -> str:
         """录入后截图（回推给人看；失败不影响任务结果）。"""

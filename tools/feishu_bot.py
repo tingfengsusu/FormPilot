@@ -36,6 +36,7 @@ from gateway.aggregator import DEFAULT_HOLD_SECONDS, MessageAggregator
 from gateway.console import ConsoleChannel, make_demo_messages
 from gateway.feishu import FeishuChannel
 from ledger import DEFAULT_MANUAL_SECONDS, Ledger
+from orchestrator import state as st
 from orchestrator.queue import TaskQueue, now_str
 from orchestrator.worker import Worker
 from report.alert import AlertRule, check_alert, format_alert
@@ -154,7 +155,9 @@ def _build(args) -> tuple:
         screenshot_dir=screenshot_dir if os.path.isabs(screenshot_dir)
         else os.path.join(_PROJECT_ROOT, screenshot_dir),
         period_start_floor=str(exec_cfg.get("period_start_floor") or "tomorrow"),
-        headless=bool(exec_cfg.get("headless", True)))
+        headless=bool(exec_cfg.get("headless", True)),
+        submit=bool(exec_cfg.get("submit", False)),
+        keep_open_seconds=float(exec_cfg.get("keep_open_seconds", 0) or 0))
 
     if args.demo:
         channel = ConsoleChannel(messages=make_demo_messages(
@@ -170,9 +173,60 @@ def _build(args) -> tuple:
     return queue, executor, channel, config, ledger
 
 
+def _is_submit_command(text: str) -> bool:
+    """「提交」/「提交 14」/「/submit」。"""
+    return text in ("提交", "/submit") or text.startswith("提交 ")
+
+
+def _submit_target(queue: TaskQueue, text: str):
+    """解析要提交的任务：带编号就用编号，否则取最近一条已完成的。"""
+    parts = text.replace("提交", " ", 1).strip().lstrip("#").strip()
+    if parts.isdigit():
+        return queue.get(int(parts))
+    done = queue.list_tasks(statuses=[st.DONE], limit=1)
+    return done[0] if done else None
+
+
+def _run_submit(queue: TaskQueue, executor: FormPilotExecutor, channel,
+                message, task) -> None:
+    """后台执行「重填 + 点提交」，完成后回推（含签名页截图）。
+
+    **提交必须在同一个浏览器会话里做**（表单状态在浏览器里，不在投保系统
+    服务器上），所以这里重新填一遍再点提交；点完就停 —— 手写签名与支付
+    由人完成（程序不代签、不代付）。
+    """
+    chat_id = message.chat_id or message.sender_id
+    _reply(queue, channel, chat_id, f"⏳ 正在重新填写并提交任务 #{task.id}……")
+    try:
+        result = executor(task.message, lambda *a, **k: None, submit=True)
+    except Exception as e:  # noqa: BLE001
+        _reply(queue, channel, chat_id, f"❌ 提交失败：{e}")
+        return
+    if not result.ok:
+        _reply(queue, channel, chat_id, f"❌ 提交失败：{result.error}")
+        return
+    queue.add_step(task.id, "SUBMITTED", ok=True,
+                   detail="人工通过飞书指令触发提交（签名/支付人工完成）")
+    _reply(queue, channel, chat_id,
+           f"✅ {result.summary}\n请在浏览器里完成【手写签名】与支付"
+           f"（程序不代签、不代付）", screenshot=result.screenshot)
+
+
+def _reply(queue: TaskQueue, channel, chat_id: str, text: str,
+           screenshot: str = "") -> None:
+    if channel is None or not chat_id:
+        print(text)
+        return
+    from gateway.models import OutboundResult
+
+    channel.reply(chat_id, OutboundResult(ok=True, text=text,
+                                          screenshot=screenshot))
+    _ = queue
+
+
 def _handle_message(queue: TaskQueue, executor: FormPilotExecutor,
                     ledger: Ledger, channel, message) -> None:
-    """收到消息（可能已合并）：先看是不是查询命令，否则解析品种后入队。"""
+    """收到消息（可能已合并）：先处理命令，否则解析品种后入队。"""
     text = (message.text or "").strip()
     if _is_status_command(text):
         _reply_text(queue, channel, message, _status_text(queue))
@@ -180,6 +234,15 @@ def _handle_message(queue: TaskQueue, executor: FormPilotExecutor,
     if _is_report_command(text):
         report = build_daily_report(queue, ledger)
         _reply_text(queue, channel, message, format_daily_report(report))
+        return
+    if _is_submit_command(text):
+        task = _submit_target(queue, text)
+        if task is None:
+            _reply_text(queue, channel, message, "没找到可提交的任务——先发「学平险」+ 证件照")
+            return
+        threading.Thread(target=_run_submit,
+                         args=(queue, executor, channel, message, task),
+                         daemon=True, name=f"submit-{task.id}").start()
         return
 
     variety = executor.resolve_variety(text)
@@ -221,7 +284,8 @@ def _make_on_message(queue: TaskQueue, executor: FormPilotExecutor,
     def complete_if_ready(message) -> bool:
         """够不够：有文字 + （品种要附件时有附件）。"""
         text = (message.text or "").strip()
-        if _is_status_command(text) or _is_report_command(text):
+        if _is_status_command(text) or _is_report_command(text) \
+                or _is_submit_command(text):
             return True
         if not text:
             return False                        # 只有图片 → 等文字
@@ -252,8 +316,8 @@ def _make_on_message(queue: TaskQueue, executor: FormPilotExecutor,
 
     def on_message(message) -> None:
         text = (message.text or "").strip()
-        is_command = (_is_status_command(text) or _is_report_command(text)) \
-            and not message.attachments
+        is_command = (_is_status_command(text) or _is_report_command(text)
+                      or _is_submit_command(text)) and not message.attachments
         if is_command or hold_seconds <= 0:
             _handle_message(queue, executor, ledger, channel, message)
             return
