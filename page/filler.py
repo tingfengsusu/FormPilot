@@ -132,10 +132,28 @@ class FormFiller:
         """
         from verifier.checker import Checker
 
+        from .overlay import dismiss_blocking_popups
+
+        # 实测：投保页的「投保须知」弹窗会**在每次点击表单后重新弹出**，
+        # 不先关掉的话所有点击都被遮罩拦截（报错像「点击超时」，很误导）
+        dismiss_blocking_popups(page)
+
         report: List[Dict[str, Any]] = []
 
         for mapping in self.product.field_mapping:
+            dismiss_blocking_popups(page, rounds=3)
             value, rule_note = self._resolve_value(mapping)
+
+            # 只校验不填（页面自动算出来的字段，实测：保险期间止 = 起期 + 364 天）
+            if mapping.fill_mode == "verify_only":
+                report.append({
+                    "property": mapping.property,
+                    "locator": mapping.locator,
+                    "status": "computed",
+                    "value": str(value) if value not in (None, "") else "",
+                    "message": "由页面自动计算（只回读校验，不填写）",
+                })
+                continue
 
             # 点击型字段（如方案卡片）：不需要属性值，点中即完成
             if mapping.fill_mode == "click":
@@ -193,15 +211,16 @@ class FormFiller:
         time.sleep(self.product.verify_delay_ms / 1000.0)
         issues = Checker().verify(page, self.product, self.pool)
 
-        # 每项补充校验状态
+        # 每项补充校验状态（**保留原报错**：填充失败的原因不能被覆盖掉，
+        # 否则只看到「回读不一致」，看不出到底是没填上还是填错了）
         issue_map = {i["property"]: i for i in issues}
         for r in report:
             if r["property"] in issue_map:
+                mismatch = (f"回读不一致: 期望 {issue_map[r['property']]['expected']} "
+                            f"实际 {issue_map[r['property']]['actual']}")
+                previous = str(r.get("message") or "")
                 r["status"] = "mismatch"
-                r["message"] = (
-                    f"回读不一致: 期望 {issue_map[r['property']]['expected']} "
-                    f"实际 {issue_map[r['property']]['actual']}"
-                )
+                r["message"] = f"{previous}；{mismatch}" if previous else mismatch
 
         self._last_report = report
         self._last_issues = issues
@@ -238,8 +257,10 @@ class FormFiller:
             return
 
         if fill_mode == "click":
-            page.locator(locator).first.click()
-            page.wait_for_timeout(300)
+            from .overlay import click_with_guard
+
+            # 点击型字段也要过遮挡把关（实测方案卡片就是被投保须知遮罩挡住的）
+            click_with_guard(page, locator, timeout=5000)
             return
 
         if fill_mode == "select":
@@ -259,8 +280,18 @@ class FormFiller:
                 el.select_option(value)          # 按 <option value="..."> 匹配
             except Exception:
                 el.select_option(label=value)    # 兜底：按选项可见文本匹配
-        else:
+        elif tag in ("input", "textarea"):
             el.fill(value)
+        else:
+            # div/span 模拟的输入框（实测：学校名称外层是 div）：点开后往
+            # 里面可编辑的元素里输入
+            from .overlay import click_with_guard
+
+            click_with_guard(page, locator, timeout=5000)
+            try:
+                el.fill(value)
+            except Exception:
+                page.keyboard.type(str(value))
 
     #: 联想候选项选择器（12306 等页面的通用形态：可见 div, id 形如 citem_0）
     _AUTOCOMPLETE_ITEM_SELECTOR = '[id^="citem_"]'

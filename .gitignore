@@ -22,3 +22,8 @@ dist/
 *.csv
 records*.json
 data/
+
+# 身份证号加密密钥（Fernet）：丢了打不开库，泄露等于明文，绝不入库
+# （batch/crypto.py 默认路径就是 config/.id_card.key）
+config/.id_card.key
+config/.id_card.key.*

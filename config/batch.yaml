@@ -14,13 +14,14 @@ import:
   ref_year: 2026
   # 导入时是否逐条校验（关闭则全部落「未确认」，后续手动校验）
   validate_on_import: true
-  # 起期最早允许的日期（实测：投保页「保险期间·起」是日期选择器，只能选今天及之后，
-  # 台账里的 8 月分期填不进去）。取值：
-  #   today      = 起期早于今天的，整体平移到今天（保持原时长），逐条留痕 + 报告提示确认
+  # 起期最早允许的日期。实测（2026-09-20）：投保页「保险期间·起」的日期列
+  # **从明天开始**（今天选不了），所以下限用 tomorrow。取值：
+  #   tomorrow   = 起期早于明天的，整体平移到明天（保持原时长），逐条留痕 + 报告提示
+  #   today      = 下限为今天（若页面将来放开限制可改回）
   #   YYYY-MM-DD = 指定最早日期
-  #   off        = 不调整（起期早于今天的行需人工处理）
-  # 注意：起保日 = 录入当天的口径，录入时（P1 runner）会再按当天重新取平，避免跨天失效。
-  period_start_floor: today
+  #   off        = 不调整（起期早于下限的行需人工处理）
+  # 注意：起保日 = 录入当天的口径，录入时（P1 runner）会再按当天取平，避免跨天失效。
+  period_start_floor: tomorrow
 
 dictionary:
   config_dir: config
@@ -70,6 +71,7 @@ execute:
   property_map:
     学生姓名: name
     学生身份证号: id_card
+    被保人手机号: phone         # 学生无手机号 → 台账里这列是家长手机号
     监护人姓名: payer_name       # 缴款人（家长）；留空则用 applicant_name / 当前操作者
     监护人电话: payer_phone
     保险方案: plan
@@ -84,6 +86,7 @@ execute:
   required_properties:
     - 学生姓名
     - 学生身份证号
+    - 被保人手机号
     - 监护人姓名
     - 监护人电话
     - 学校名称

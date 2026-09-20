@@ -48,6 +48,12 @@
 // 真实页面的约束：起期只能选今天及之后（更早的日期直接不渲染）
 const TODAY = new Date();
 const MIN_DAYS_AHEAD = 0;
+// 复现真机的怪癖：Vant 滚轮出现过「点 20 日结果选中 21 日」（固定偏移）。
+// 用 #offset=1 打开本页即可模拟，用于验证「回读 + 按差值修正」的闭环逻辑。
+const OFFSET = (function () {
+  const m = location.hash.match(/offset=(-?\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+})();
 let currentField = null;
 let selected = {year: TODAY.getFullYear(), month: TODAY.getMonth() + 1, day: TODAY.getDate()};
 
@@ -56,19 +62,21 @@ function daysInMonth(y, m) { return new Date(y, m, 0).getDate(); }
 function fillColumn(unit, values) {
   const ul = document.querySelector('.van-picker-column[data-unit="' + unit + '"]');
   ul.innerHTML = '';
-  values.forEach(function (v) {
+  values.forEach(function (v, index) {
     const li = document.createElement('li');
     li.className = 'van-picker-column__item' + (v === selected[unit] ? ' selected' : '');
     li.textContent = v + (unit === 'year' ? '年' : unit === 'month' ? '月' : '日');
     li.addEventListener('click', function () {
-      selected[unit] = v;
+      // OFFSET != 0 时模拟真机的怪癖：**只有「日」列**出现过「点 20 日选中 21 日」
+      const shift = (unit === 'day') ? OFFSET : 0;
+      const target = values[Math.min(values.length - 1,
+                                     Math.max(0, index + shift))];
+      selected[unit] = target;
       if (unit === 'month' || unit === 'year') {
         const max = daysInMonth(selected.year, selected.month);
         if (selected.day > max) selected.day = max;
-        renderAll();
-      } else {
-        renderAll();
       }
+      renderAll();
     });
     ul.appendChild(li);
   });
@@ -78,7 +86,7 @@ function renderAll() {
   const minDate = new Date(TODAY.getTime() + MIN_DAYS_AHEAD * 86400000);
   const years = [], months = [], days = [];
   for (let y = minDate.getFullYear(); y <= minDate.getFullYear() + 1; y++) years.push(y);
-  years.forEach(y => months.push(...Array.from({length: 12}, (_, i) => i + 1)));
+  for (let m = 1; m <= 12; m++) months.push(m);
   const maxDay = daysInMonth(selected.year, selected.month);
   for (let d = 1; d <= maxDay; d++) days.push(d);
   // 只在「今天」这一天下限；更早的日期不允许（真实页面同样处理）

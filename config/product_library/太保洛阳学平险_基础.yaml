@@ -34,6 +34,13 @@ field_mapping:
     required: true
     verify_after_fill: true
 
+  # 被保人手机号：页面标了必填（红 *）。学平险场景学生无手机号，
+  # 台账里这列=家长手机号（设计文档附录 A.1）
+  - property: 被保人手机号
+    locator: 'input[placeholder="请录入手机号"] >> nth=1'
+    required: true
+    verify_after_fill: true
+
   # —— 投保人（监护人）——
   - property: 监护人姓名
     locator: 'input[placeholder="请录入姓名"] >> nth=0'
@@ -55,9 +62,11 @@ field_mapping:
 
   # —— 就读信息（2026-09-19 探针实测；locator 由 tools/probe_options.py 产出）——
   # 学校名称是**文本输入**（不是下拉）：直接录入校名，规范名由
-  # config/school_aliases.yaml 人工确认（dictionary.kinds.school: text）
+  # config/school_aliases.yaml 人工确认（dictionary.kinds.school: text）。
+  # 注意 locator 指向**内层输入框**（外层 div.school-select 是容器，
+  # Playwright 不能对 div 调 fill；实测往内层 input 输入后框内文本会更新）
   - property: 学校名称
-    locator: 'div.school-select'
+    locator: 'div.school-select input'
     required: true
     verify_after_fill: true
 
@@ -92,7 +101,9 @@ field_mapping:
 
   - property: 保险期间止
     locator: '#app > div > div > div > div:nth-of-type(3) > div > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div > span > div:nth-of-type(8) > div > div:nth-of-type(3) > div:nth-of-type(2) > div > span > span > label > input'
-    fill_mode: date
+    # 实测：止期由页面按「起期 + 364 天」自动算出来，且点不开（不给手动选）
+    # → 只回读校验，不填写
+    fill_mode: verify_only
     required: true
     verify_after_fill: true
 

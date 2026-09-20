@@ -329,13 +329,17 @@ class BatchRunner:
 
     @staticmethod
     def _problems(report: Sequence[Dict[str, Any]]) -> List[str]:
-        """从填充报告里挑出问题（missing / error / mismatch）。"""
+        """从填充报告里挑出问题（missing / error / mismatch）。
+
+        每条截断到 160 字：Playwright 的点击超时日志很长，不截断的话
+        会把后面的问题挤掉（实测只看到第一条报错）。
+        """
         problems: List[str] = []
         for entry in report or []:
             status = str(entry.get("status") or "")
             if status in _BAD_STATUSES:
-                message = entry.get("message") or status
-                problems.append(f"[{entry.get('property')}] {message}")
+                message = str(entry.get("message") or status)
+                problems.append(f"[{entry.get('property')}] {message[:160]}")
         return problems
 
     def _screenshot(self, page: Any, applicant: Applicant) -> str:

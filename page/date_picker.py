@@ -68,42 +68,78 @@ def parse_iso_date(value: Any) -> Optional[Tuple[int, int, int]]:
     return year, month, day
 
 
-def fill_date(page: Any, locator: str, value: str) -> str:
+def fill_date(page: Any, locator: str, value: str,
+              max_attempts: int = 3) -> str:
     """把一个日期字段填成 ``value``（ISO 或中文日期）。
 
+    **闭环校验**（实测必需）：Vant 滚轮「点哪一项就选中哪一项」并不总成立
+    ——真机上出现过点「20 日」结果选中「21 日」（固定偏移 +1 天）。
+    所以每次点完都**回读字段值**，与目标不一致就按观察到的差值修正重试；
+    重试用尽仍不一致则报错（宁可不填，也不能填错一天）。
+
     :return: 实际填进去的文本（回读结果）
-    :raises DatePickerError: 控件不识别 / 日期不可选 / 回读不一致
+    :raises DatePickerError: 控件不识别 / 日期不可选 / 多次修正后仍不一致
     """
     parts = parse_iso_date(value)
     if parts is None:
         raise DatePickerError(f"日期格式无法解析：{value!r}")
-    year, month, day = parts
+    target = date(*parts)
 
     element = page.locator(locator).first
-    tag = ""
     try:
         tag = str(element.evaluate("el => el.tagName.toLowerCase()"))
     except Exception:  # noqa: BLE001
-        pass
+        tag = ""
 
-    # 1) 可写的输入框：直接输入（最快也最稳）
-    if tag in ("input", "textarea"):
-        if _fill_input(element, year, month, day):
-            _verify(page, locator, year, month, day)
-            return _readback(page, locator)
+    # 已经是对的就不用动它（实测：页面把起期默认成「明天」，刚好等于目标）
+    current = _readback(page, locator)
+    if _same_day(current, target):
+        return current
 
-    # 2) 点开选择器，在年/月/日三列里各点一次
-    click_with_guard(page, locator, timeout=5000)
-    page.wait_for_timeout(500)
-    if not _pick_columns(page, year, month, day):
-        _cancel(page)
-        raise DatePickerError(
-            f"日期选择器结构不识别或日期不可选（目标 {year}-{month:02d}-{day:02d}）"
-            f"——请人工确认该字段的填法（可用 tools/scan_url.py 看页面结构）")
-    _confirm(page)
-    page.wait_for_timeout(400)
-    _verify(page, locator, year, month, day)
-    return _readback(page, locator)
+    # 可写的输入框：直接输入（最快也最稳），回读确认
+    if tag in ("input", "textarea") and _fill_input(element, *parts):
+        text = _readback(page, locator)
+        if _same_day(text, target) or not text:
+            return text
+        # 输入了但页面把它规整成别的值 → 继续走滚轮路径修正
+
+    attempt_target = target
+    corrections = {"year": 0, "month": 0, "day": 0}
+    actual = None
+    for attempt in range(max(1, max_attempts)):
+        year = target.year + corrections["year"]
+        month = target.month + corrections["month"]
+        day = target.day + corrections["day"]
+        click_with_guard(page, locator, timeout=5000)
+        page.wait_for_timeout(500)
+        if not _pick_columns(page, year, month, day):
+            _cancel(page)
+            raise DatePickerError(
+                f"日期选择器结构不识别或日期不可选（目标 "
+                f"{year}-{month:02d}-{day:02d}）——请人工确认该字段的填法"
+                f"（可用 tools/scan_url.py 看页面结构）")
+        _confirm(page)
+        page.wait_for_timeout(400)
+
+        text = _readback(page, locator)
+        actual = _parse_field_date(text)
+        if actual is None:
+            return text          # 读不出/解析不出 → 不阻断（组件把值藏在别处的情况）
+        if actual == target:
+            return text
+        # 按**每一列各自的偏差**修正后重试（真人发现拨错一格也是这么拨回来的）：
+        # 整日差回推会在跨月/跨年时算飞，所以逐列算
+        corrections["year"] -= actual.year - target.year
+        corrections["month"] -= actual.month - target.month
+        corrections["day"] -= actual.day - target.day
+        if not 1 <= target.month + corrections["month"] <= 12:
+            break
+        if not 1 <= target.day + corrections["day"] <= 31:
+            break
+
+    raise DatePickerError(
+        f"日期回读不一致：期望 {target.isoformat()}，字段显示「{_readback(page, locator)}」"
+        f"（已尝试 {max_attempts} 次修正）——已停止，不静默错填")
 
 
 # ----------------------------------------------------------------------
@@ -257,11 +293,28 @@ def _readback(page: Any, locator: str) -> str:
         return ""
 
 
+def _parse_field_date(text: str) -> Optional[date]:
+    """把字段里显示的日期解析成 date（读不出返回 None）。"""
+    parts = parse_iso_date(text)
+    return date(*parts) if parts else None
+
+
+def _same_day(text: str, target: date) -> bool:
+    return _parse_field_date(text) == target
+
+
 def _verify(page: Any, locator: str, year: int, month: int, day: int) -> None:
     """回读校验：填进去的文本必须能看出目标年月日。"""
     text = _readback(page, locator)
     if not text:
         return          # 读不到就不拦（组件把值藏在别处的情况）
+    parsed = _parse_field_date(text)
+    if parsed is not None:
+        if parsed != date(year, month, day):
+            raise DatePickerError(
+                f"日期回读不一致：期望 {year}-{month:02d}-{day:02d}，"
+                f"字段显示「{text}」——已停止，不静默错填")
+        return
     numbers = {int(n) for n in re.findall(r"\d+", text)}
     if not {year, month, day} <= numbers:
         raise DatePickerError(

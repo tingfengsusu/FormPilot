@@ -86,6 +86,37 @@ def test_fill_date_on_mock_page():
         playwright.stop()
 
 
+def test_fill_date_corrects_off_by_one_picker():
+    """真机怪癖：Vant 滚轮「点 20 日」可能选中 21 日（固定偏移）。
+
+    闭环校验必须把这种偏移**修正回来**，而不是错填或直接失败。
+    """
+    playwright, browser = _playwright_or_skip()
+    if browser is None:
+        return
+    try:
+        url = "file:///" + MOCK_PAGE.replace("\\", "/") + "#offset=1"
+        page = browser.new_page()
+        page.goto(url)
+
+        tomorrow = date.today() + timedelta(days=1)
+        result = fill_date(page, "#startValue", tomorrow.isoformat())
+        assert tomorrow.isoformat() in result, result
+        assert page.locator("#startValue").inner_text().strip() == tomorrow.isoformat()
+
+        # 修正不过来时必须报错，而不是把错值留下（max_attempts=1 时没有修正机会）
+        # 注意挑一个「+1 之后不会因为月末夹紧而恰好等于目标」的日期
+        later = (date.today() + timedelta(days=5)).isoformat()
+        try:
+            fill_date(page, "#endValue", later, max_attempts=1)
+            assert False, "偏移未修正时应报错"
+        except DatePickerError as e:
+            assert "回读不一致" in str(e)
+    finally:
+        browser.close()
+        playwright.stop()
+
+
 def test_filler_integration():
     """品种声明 fill_mode: date 时，Filler 能直接填（整条链路）。"""
     playwright, browser = _playwright_or_skip()
@@ -127,5 +158,6 @@ def test_filler_integration():
 if __name__ == "__main__":
     test_parse_iso_date()
     test_fill_date_on_mock_page()
+    test_fill_date_corrects_off_by_one_picker()
     test_filler_integration()
     print("test_date_picker.py 全部通过 ✓")

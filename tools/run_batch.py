@@ -9,6 +9,7 @@
     python tools/run_batch.py --list
 
     # 3) 试跑 1 条（会真的打开投保页填写，**不点提交**）
+    python tools/run_batch.py --confirm 12 --limit 1   # 先把 12 号置为「已确认」
     python tools/run_batch.py --batch 1 --limit 1
 
     # 4) 正式跑（串行；条间间隔见 config/batch.yaml 的 execute.interval_seconds）
@@ -16,6 +17,8 @@
 
 注意：
   - 只有「已确认」的记录会被录入；「数据异常」要先修正
+  - 「已确认」= 客户确认要投（人工决定）：用 --confirm 显式指定记录 id，
+    或用 GUI 批量投保页逐条确认
   - 录入结果：截图落在 data/screenshots/<批次>/，状态变「待复核」或「录入失败」
   - 提交与支付**永远人工**（execute.submit 默认 false）
   - 投保站点有访问频率限制：本工具串行执行、条间留间隔，别并发多开
@@ -61,6 +64,41 @@ def _do_import(db: BatchDB, recipe: Recipe, path: str, sheet: str = "") -> None:
           f"再运行 python tools/run_batch.py --batch {report.batch.id}")
 
 
+def _confirm_records(db: BatchDB, spec: str) -> int:
+    """把指定记录置为「已确认」（客户确认投保意向 = 人工决定）。
+
+    只允许从「未确认 / 数据异常」流转，且**数据异常的会拒绝**——
+    先修正数据再确认，避免把异常记录录进投保系统。
+    """
+    from batch.models import STATUS_CONFIRMED, STATUS_DATA_ERROR
+
+    ids = [int(part) for part in spec.replace("，", ",").split(",") if part.strip()]
+    failed = 0
+    for applicant_id in ids:
+        applicant = db.get_applicant(applicant_id)
+        if applicant is None:
+            print(f"  ✗ {applicant_id}：不存在")
+            failed += 1
+            continue
+        if applicant.status == STATUS_DATA_ERROR:
+            problems = "；".join(v.detail for v in applicant.validations
+                                if not v.passed)[:200]
+            print(f"  ✗ {applicant_id} {applicant.name}：数据异常，先修正\n"
+                  f"      {problems}")
+            failed += 1
+            continue
+        try:
+            db.set_status(applicant_id, STATUS_CONFIRMED, operator="人工",
+                          note="客户确认投保意向")
+        except Exception as e:  # noqa: BLE001
+            print(f"  ✗ {applicant_id} {applicant.name}：{e}")
+            failed += 1
+            continue
+        print(f"  ✓ {applicant_id} {applicant.name} → 已确认"
+              f"（{applicant.school} / {applicant.grade} / {applicant.class_name}）")
+    return 1 if failed else 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="run_batch.py",
@@ -72,6 +110,8 @@ def main(argv=None) -> int:
     parser.add_argument("--sheet", metavar="工作表", default="",
                         help="Excel 工作表名（默认第一个）")
     parser.add_argument("--list", action="store_true", help="列出批次与状态计数")
+    parser.add_argument("--confirm", metavar="ID[,ID...]",
+                        help="把指定记录置为「已确认」（客户确认要投 = 人工决定）")
     parser.add_argument("--batch", type=int, metavar="ID", help="要录入的批次 id")
     parser.add_argument("--limit", type=int, metavar="N", help="最多录入 N 条（试跑用）")
     parser.add_argument("--yes", action="store_true", help="跳过人工确认")
@@ -84,6 +124,8 @@ def main(argv=None) -> int:
         if args.import_path:
             _do_import(db, recipe, args.import_path, args.sheet)
             return 0
+        if args.confirm:
+            return _confirm_records(db, args.confirm)
         if args.list or args.batch is None:
             _list_batches(db, recipe)
             if args.batch is None:

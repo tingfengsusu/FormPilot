@@ -26,6 +26,8 @@ class FieldMapping:
     #   click        点击型选择（方案卡片/标签页）
     #   select       下拉选择（学校/年级/班级；兼容原生 select 与自定义组件）
     #   date         日期选择器（保险期限；原生输入框或滚轮/日历面板）
+    #   verify_only  **只回读校验、不填写**（页面自动算出来的字段，
+    #                如实测的「保险期间止」= 起期 + 364 天，且点不开）
     fill_mode: str = "plain"
 
     @classmethod

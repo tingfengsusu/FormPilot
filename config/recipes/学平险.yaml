@@ -40,6 +40,7 @@ execute:
   property_map:                     # 明细字段 → 品种属性名
     学生姓名: name
     学生身份证号: id_card
+    被保人手机号: phone             # 学生无手机号 → 台账里这列是家长手机号
     监护人姓名: payer_name
     监护人电话: payer_phone
     保险方案: plan

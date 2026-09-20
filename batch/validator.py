@@ -195,18 +195,22 @@ def resolve_period_floor(value: Any, today: Optional[date] = None
                          ) -> Optional[date]:
     """解析「保险期间起期最早允许到哪天」的配置。
 
-    实测：投保页的「保险期间·起」是日期选择器，**只能选今天及之后**，
-    台账里更早的起期填不进去（填了也会被页面拒绝）。配置取值：
+    实测（2026-09-20 再次确认）：投保页的「保险期间·起」是日期选择器，
+    日期列**从明天开始**（今天选不了）——所以下限取 ``tomorrow``。
 
-    - ``today``（或 ``今天``）：取 today（默认 date.today()）
+    - ``today`` / ``今天``：取 today（默认 date.today()）
+    - ``tomorrow`` / ``明天``：取 today + 1 天（**页面实测的最早值**）
     - ``YYYY-MM-DD``：指定最早日期
     - 空 / ``off`` / ``none`` / ``false``：不限制（返回 None）
     """
     text = normalize_text(value).lower()
     if not text or text in ("off", "none", "false", "0"):
         return None
+    base = today or date.today()
     if text in ("today", "今天"):
-        return today or date.today()
+        return base
+    if text in ("tomorrow", "明天", "+1", "next_day"):
+        return base + timedelta(days=1)
     parsed = parse_date(text)
     if parsed is None or parsed.year == 1900:   # 无年份哨兵 = 配置写错
         return None
