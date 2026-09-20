@@ -209,6 +209,12 @@ def test_overrides_beat_extra_properties():
     assert "保险期间起" in calls                    # auto_period 补上了
 
 
+def test_headless_switch():
+    """默认无头；executor.headless=false 时在本机弹窗（可亲眼看着填）。"""
+    assert FormPilotExecutor(_varieties()).headless is True
+    assert FormPilotExecutor(_varieties(), headless=False).headless is False
+
+
 if __name__ == "__main__":
     test_resolve_variety()
     test_map_fields_and_extras()
@@ -221,4 +227,5 @@ if __name__ == "__main__":
     test_message_overrides()
     test_auto_period_uses_page_floor()
     test_overrides_beat_extra_properties()
+    test_headless_switch()
     print("test_executor.py 全部通过 ✓")

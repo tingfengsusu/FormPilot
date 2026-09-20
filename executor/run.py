@@ -77,13 +77,16 @@ class FormPilotExecutor:
                  screenshot_dir: str = "",
                  ocr_fn: Optional[Callable[[str, str], Dict[str, Any]]] = None,
                  fill_fn: Optional[Callable[..., Dict[str, Any]]] = None,
-                 period_start_floor: str = "tomorrow"):
+                 period_start_floor: str = "tomorrow",
+                 headless: bool = True):
         self.varieties = dict(varieties or {})
         self.screenshot_dir = screenshot_dir or os.path.join("data", "screenshots")
         self._ocr_fn = ocr_fn
         self._fill_fn = fill_fn
         #: 保险期间起的最早日期（实测：投保页日期列从「明天」开始）
         self.period_start_floor = period_start_floor
+        #: 无头浏览器（默认）；设 False 可以**亲眼看到它填表**（本机窗口）
+        self.headless = bool(headless)
 
     # ------------------------------------------------------------------
     # 对外：worker 的 executor
@@ -291,7 +294,7 @@ class FormPilotExecutor:
         report: List[Dict[str, Any]] = []
         issues: List[Dict[str, Any]] = []
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(headless=self.headless)
             try:
                 context = create_context(browser, product.context,
                                          target_url=product.target_url)
