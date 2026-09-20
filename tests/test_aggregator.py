@@ -210,6 +210,85 @@ def test_cli_replies_hint_when_incomplete():
     assert replies and "品种名" in replies[0]
 
 
+def test_cli_downloads_attachments_before_enqueue():
+    """流程必须**先把附件落到本地**再入队（实测踩过：整条链路漏了下载这一步）。"""
+    from executor.run import VarietyConfig
+    from orchestrator.queue import TaskQueue
+    from tools.feishu_bot import _handle_message
+
+    class _Executor:
+        varieties = {"学平险": VarietyConfig(keyword="学平险", product="p",
+                                             field_map={"姓名": "学生姓名"})}
+
+        def resolve_variety(self, text):
+            return self.varieties.get("学平险")
+
+    calls = []
+
+    class _Channel:
+        def download_all(self, message):
+            calls.append(message.msg_id)
+            for attachment in message.attachments:
+                attachment.path = "local_copy.jpg"      # 模拟下载成功
+            return [a.path for a in message.attachments]
+
+        def send_text(self, chat_id, text):
+            raise AssertionError("不该回提示（下载成功了）")
+
+    with tempfile.TemporaryDirectory() as td:
+        queue = TaskQueue(os.path.join(td, "gateway.db"))
+        try:
+            message = _image("om_img_key", key="k1")
+            message.text = "学平险"
+            message.attachments[0].message_id = "om_img_key"
+            _handle_message(queue, _Executor(), None, _Channel(), message)
+
+            assert calls == ["om_img_key"]              # 下载被调用了
+            task = queue.list_tasks(limit=1)[0]
+            assert task.attachments[0].path == "local_copy.jpg"
+            assert task.attachments[0].message_id == "om_img_key"
+        finally:
+            queue.close()
+
+
+def test_cli_replies_when_download_fails():
+    """附件下载全失败 → 回明确原因，不建注定失败的任务。"""
+    from executor.run import VarietyConfig
+    from orchestrator.queue import TaskQueue
+    from tools.feishu_bot import _handle_message
+
+    class _Executor:
+        varieties = {"学平险": VarietyConfig(keyword="学平险", product="p",
+                                             field_map={"姓名": "学生姓名"})}
+
+        def resolve_variety(self, text):
+            return self.varieties.get("学平险")
+
+    replies = []
+
+    class _Channel:
+        def download_all(self, message):
+            for attachment in message.attachments:      # 下载失败：只记原因
+                attachment.error = "获取资源失败：permission denied"
+            return []
+
+        def send_text(self, chat_id, text):
+            replies.append(text)
+
+    with tempfile.TemporaryDirectory() as td:
+        queue = TaskQueue(os.path.join(td, "gateway.db"))
+        try:
+            message = _image("om_bad")
+            message.text = "学平险"
+            _handle_message(queue, _Executor(), None, _Channel(), message)
+
+            assert queue.list_tasks(limit=1) == []      # 没建任务
+            assert replies and "附件下载失败" in replies[0]
+            assert "im:resource" in replies[0]
+        finally:
+            queue.close()
+
+
 def test_single_instance_lock():
     """单实例保护：飞书会把事件分摊到多个长连接，跑两个实例会互相抢消息。"""
     import tempfile

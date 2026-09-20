@@ -141,6 +141,21 @@ def _handle_message(queue: TaskQueue, executor: FormPilotExecutor,
         return
 
     variety = executor.resolve_variety(text)
+    if message.attachments and channel is not None:
+        # 先把附件落到本地（executor 只认本地文件；证件照属于敏感信息，
+        # 本地处理、用完即删——设计文档第九节）
+        paths = channel.download_all(message)
+        failed = [a for a in message.attachments if not a.path]
+        print(f"[{now_str()}] 附件下载：{len(paths)}/{len(message.attachments)} 成功"
+              + (f"；失败原因：{'；'.join(a.error or '未知' for a in failed)[:160]}"
+                 if failed else ""))
+        if failed and not paths:
+            detail = (failed[0].error or "未知原因")[:160]
+            _reply_text(queue, channel, message,
+                        f"附件下载失败：{detail}\n"
+                        f"（请确认飞书应用已开通 im:resource 权限）")
+            return
+
     task = queue.enqueue(message, variety=variety.keyword if variety else "")
     if task is None:
         print(f"[{now_str()}] 重复消息（msg_id={message.msg_id}），已忽略")

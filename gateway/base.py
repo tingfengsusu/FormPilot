@@ -57,7 +57,12 @@ class Channel:
         raise NotImplementedError
 
     def download_all(self, message: InboundMessage) -> List[str]:
-        """下载消息里的全部附件，返回本地路径列表。"""
+        """下载消息里的全部附件，返回本地路径列表。
+
+        单个附件失败不会中断其余；失败原因记在 ``attachment.error`` 上——
+        **不要静默吞掉**（实测踩过：下载失败被吞成「消息里没有附件」，
+        排查方向全跑偏了）。
+        """
         paths: List[str] = []
         for attachment in message.attachments:
             if attachment.path and os.path.exists(attachment.path):
@@ -66,9 +71,9 @@ class Channel:
             try:
                 paths.append(self.download_attachment(message, attachment))
             except Exception as e:  # noqa: BLE001 — 单个附件失败不影响其余
-                attachment.name = attachment.name or "(下载失败)"
-                attachment.path = ""
-                _ = e
+                attachment.error = str(e)[:300]
+                print(f"[gateway] 附件下载失败（{attachment.name or attachment.kind}）"
+                      f"：{attachment.error}")
         return paths
 
     def send_text(self, chat_id: str, text: str) -> None:

@@ -95,12 +95,40 @@ def test_parse_image_and_file_event():
     assert len(image.attachments) == 1
     assert image.attachments[0].kind == "image"
     assert image.attachments[0].file_key == "img_v2_abc"
+    # 附件必须记住「自己来自哪条消息」——合并后下载要用它（实测踩过的坑）
+    assert image.attachments[0].message_id == "om_2"
 
     file_msg = FeishuChannel.parse_event(_FakeData(_FakeEvent(_FakeMessage(
         "om_3", "oc_3", "file",
         json.dumps({"file_key": "file_1", "file_name": "台账.xlsx"})))))
     assert file_msg.attachments[0].kind == "file"
     assert file_msg.attachments[0].name == "台账.xlsx"
+    assert file_msg.attachments[0].message_id == "om_3"
+
+
+def test_attachment_keeps_its_own_message_id_after_merge():
+    """合并「文字 + 图片」两条消息后，附件的 message_id 仍是图片那条。"""
+    from gateway.aggregator import merge_messages
+
+    text = FeishuChannel.parse_event(_FakeData(_FakeEvent(_FakeMessage(
+        "om_text", "oc_1", "text", json.dumps({"text": "学平险"})))))
+    image = FeishuChannel.parse_event(_FakeData(_FakeEvent(_FakeMessage(
+        "om_img", "oc_1", "image", json.dumps({"image_key": "k1"})))))
+    merged = merge_messages([text, image])
+    assert merged.msg_id == "om_text"                      # 幂等键取第一条
+    assert merged.attachments[0].message_id == "om_img"    # 但下载要用图片那条
+
+
+def test_download_failure_is_recorded_not_swallowed():
+    """下载失败要留下原因（不能再显示成「消息里没有附件」）。"""
+    with tempfile.TemporaryDirectory() as td:
+        channel = ConsoleChannel(printer=lambda *_: None, attachment_dir=td)
+        message = InboundMessage(msg_id="m1", attachments=[
+            Attachment(kind="image", file_key="k", path="不存在.png")])
+        paths = channel.download_all(message)              # 不抛异常
+        assert paths == []
+        assert message.attachments[0].error                 # 但原因记下来了
+        assert "不存在" in message.attachments[0].error
 
 
 def test_parse_post_rich_text_event():
@@ -211,6 +239,8 @@ if __name__ == "__main__":
     test_outbound_result_format()
     test_parse_text_event()
     test_parse_image_and_file_event()
+    test_attachment_keeps_its_own_message_id_after_merge()
+    test_download_failure_is_recorded_not_swallowed()
     test_parse_post_rich_text_event()
     test_parse_event_tolerates_broken_payload()
     test_parse_content_helper()

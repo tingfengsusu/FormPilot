@@ -18,27 +18,38 @@ class Attachment:
     :param file_key: 平台侧的资源键（下载时要用）
     :param name: 原文件名（平台可能不给）
     :param path: 本地落盘路径（下载后填）
+    :param message_id: **携带这个附件的消息 id** —— 合并多条消息后每条消息的 id
+        不同，下载资源必须用它，不能用合并后任务上的那个 id（实测踩过）
+    :param error: 下载/处理失败的原因（让人看到真实原因，而不是「没有附件」）
     """
 
     kind: str = "image"
     file_key: str = ""
     name: str = ""
     path: str = ""
+    message_id: str = ""
+    error: str = ""
 
     @property
     def is_image(self) -> bool:
         return self.kind == "image"
 
+    @property
+    def downloaded(self) -> bool:
+        return bool(self.path)
+
     def to_dict(self) -> Dict[str, Any]:
         return {"kind": self.kind, "file_key": self.file_key,
-                "name": self.name, "path": self.path}
+                "name": self.name, "path": self.path,
+                "message_id": self.message_id}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Attachment":
         return cls(kind=str(data.get("kind") or "image"),
                    file_key=str(data.get("file_key") or ""),
                    name=str(data.get("name") or ""),
-                   path=str(data.get("path") or ""))
+                   path=str(data.get("path") or ""),
+                   message_id=str(data.get("message_id") or ""))
 
 
 @dataclass

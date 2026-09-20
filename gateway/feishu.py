@@ -173,6 +173,10 @@ class FeishuChannel(Channel):
             sender_id = str(getattr(ids, "open_id", "") or "") if ids else ""
 
         text, attachments = _parse_content(message_type, payload)
+        # 记下**这个附件来自哪条消息**：合并多条消息后，下载资源必须用它
+        # （实测踩过：用任务上的第一条消息 id 去下载第二条消息的图片 → 必然失败）
+        for attachment in attachments:
+            attachment.message_id = message_id
         return InboundMessage(
             channel=FeishuChannel.name, msg_id=message_id, sender_id=sender_id,
             chat_id=chat_id, text=text, message_type=message_type,
@@ -187,8 +191,10 @@ class FeishuChannel(Channel):
 
         if not attachment.file_key:
             raise ChannelError("附件缺少 file_key，无法下载")
+        # 用**附件所属的那条消息**的 id（合并消息后与任务上的 msg_id 不同）
+        message_id = attachment.message_id or message.msg_id
         request = (GetMessageResourceRequest.builder()
-                   .message_id(message.msg_id)
+                   .message_id(message_id)
                    .file_key(attachment.file_key)
                    .type("image" if attachment.is_image else "file")
                    .build())

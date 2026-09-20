@@ -114,7 +114,6 @@ def test_executor_without_attachment():
     result = executor(_task(with_image=False), lambda *a, **k: None)
     assert not result.ok and "没有从附件里识别出可用字段" in result.error
 
-
 def test_executor_reports_fill_problems():
     def fill_bad(config, values, task):
         return {"report": [
@@ -132,11 +131,33 @@ def test_executor_reports_fill_problems():
 
 
 def test_executor_ocr_failure_is_clear():
+    """OCR 没返回字段 → 说清是「识别不出」而不是「没附件」。"""
     executor = FormPilotExecutor(_varieties(),
                                  ocr_fn=lambda path, src: {"_error": "云 OCR 不可用"},
                                  fill_fn=_fill_ok)
     result = executor(_task(), lambda *a, **k: None)
-    assert not result.ok and "没有从附件里识别出可用字段" in result.error
+    assert not result.ok
+    assert "OCR 没有从" in result.error and "身份证OCR" in result.error
+
+
+def test_executor_reports_download_failure():
+    """附件下载失败要说清原因（不能显示成「消息里没有附件」）。"""
+    executor = FormPilotExecutor(_varieties(), fill_fn=_fill_ok)
+    task = _task()
+    task.attachments[0].path = ""                    # 没下载成功
+    task.attachments[0].error = "获取资源失败：权限不足"
+    result = executor(task, lambda *a, **k: None)
+    assert not result.ok
+    assert "附件下载失败" in result.error
+    assert "权限不足" in result.error
+    assert "im:resource" in result.error             # 给出可执行的排查方向
+
+
+def test_executor_without_attachment_says_so():
+    executor = FormPilotExecutor(_varieties(), ocr_fn=lambda path, src: _ocr(),
+                                 fill_fn=_fill_ok)
+    result = executor(_task(with_image=False), lambda *a, **k: None)
+    assert not result.ok and "消息里没有附件" in result.error
 
 
 def test_message_overrides():

@@ -100,14 +100,25 @@ class FormPilotExecutor:
 
         # 1) OCR：附件 → 字段
         started = time.time()
-        fields, images = self._extract_fields(task, config)
+        fields, images, download_errors = self._extract_fields(task, config)
         note_step("OCR", ok=bool(fields),
-                  detail=f"识别字段 {len(fields)} 个：{'、'.join(fields) or '（空）'}",
+                  detail=f"识别字段 {len(fields)} 个：{'、'.join(fields) or '（空）'}"
+                         + (f"；附件下载失败 {len(download_errors)} 个"
+                            if download_errors else ""),
                   elapsed_ms=int((time.time() - started) * 1000))
         if not fields:
+            if download_errors:
+                return ExecResult(ok=False, error=(
+                    "附件下载失败：" + "；".join(download_errors)[:200]
+                    + "（请确认飞书应用已开通 im:resource 权限）"))
+            if not images:
+                return ExecResult(ok=False, error=(
+                    "没有从附件里识别出可用字段（消息里没有附件）"
+                    if not task.attachments else
+                    "附件没有下载成功——请检查飞书应用的 im:resource 权限"))
             return ExecResult(ok=False, error=(
-                "没有从附件里识别出可用字段"
-                + ("（消息里没有附件？）" if not images else "")))
+                f"OCR 没有从 {len(images)} 张图片里识别出可用字段"
+                f"（来源：{config.ocr_source}）"))
 
         # 2) MAPPING：字段 → 品种属性（OCR + 固定补充），再让消息里的 k=v 覆盖
         started = time.time()
@@ -171,10 +182,22 @@ class FormPilotExecutor:
     # ------------------------------------------------------------------
     def _extract_fields(self, task: Any, config: VarietyConfig
                         ) -> tuple:
-        """识别附件里的字段（图片优先；没附件时用消息文本兜底不了就报错）。"""
-        images = [a.path for a in (task.attachments or []) if a.is_image and a.path]
+        """识别附件里的字段。
+
+        :return: ``(fields, images, download_errors)`` —— 下载失败的原因要带出去，
+            不能吞（否则对外只剩「没有附件」这种误导性结论）
+        """
+        images: List[str] = []
+        errors: List[str] = []
+        for attachment in (task.attachments or []):
+            if not attachment.is_image:
+                continue
+            if attachment.path:
+                images.append(attachment.path)
+            elif attachment.error:
+                errors.append(f"{attachment.name or '图片'}：{attachment.error[:120]}")
         if not images:
-            return {}, []
+            return {}, [], errors
         fields: Dict[str, Any] = {}
         for path in images:
             result = (self._ocr_fn or _default_ocr)(path, config.ocr_source)
@@ -183,7 +206,9 @@ class FormPilotExecutor:
                     if key.startswith("_") or value in (None, ""):
                         continue
                     fields.setdefault(str(key), value)
-        return fields, images
+            elif result:
+                errors.append(f"{os.path.basename(path)}：OCR 返回异常")
+        return fields, images, errors
 
     @staticmethod
     def _map_fields(fields: Dict[str, Any],
