@@ -118,6 +118,20 @@ class FormPilotExecutor:
         #: 回推回调 ``on_event(text, screenshot)``（接到飞书/控制台）
         self.on_event = on_event
         self.wait_seconds = float(wait_seconds)
+        #: 起期下限的**运行时偏移天数**（异常自愈的 adjust_period_floor 会动它）
+        self.period_floor_offset_days = 0
+
+    def adjust_period_floor(self, days: int) -> bool:
+        """自愈动作：把起期下限往后挪 ``days`` 天（本次进程内生效）。
+
+        实测：投保页的起期日期列只允许「明天」及之后；如果页面上限又变了
+        （比如活动规则调整），自愈会放宽下限再试，而不是直接报警。
+        """
+        try:
+            self.period_floor_offset_days += int(days)
+        except (TypeError, ValueError):
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # 对外：worker 的 executor
@@ -141,7 +155,8 @@ class FormPilotExecutor:
             note_step("MAPPING", ok=False, detail="未匹配到品种")
             return ExecResult(ok=False, error=(
                 f"没识别出品种：请在消息里带上品种关键词"
-                f"（可用：{'、'.join(self.varieties) or '（未配置）'}）"))
+                f"（可用：{'、'.join(self.varieties) or '（未配置）'}）"),
+                error_step="MAPPING")
 
         # 1) OCR：附件 → 字段
         started = time.time()
@@ -155,7 +170,8 @@ class FormPilotExecutor:
             if download_errors:
                 return ExecResult(ok=False, error=(
                     "附件下载失败：" + "；".join(download_errors)[:200]
-                    + "（请确认飞书应用已开通 im:resource 权限）"))
+                    + "（请确认飞书应用已开通 im:resource 权限）"),
+                    error_step="OCR")
             if not images:
                 return ExecResult(ok=False, error=(
                     "没有从附件里识别出可用字段（消息里没有附件）"
@@ -163,7 +179,7 @@ class FormPilotExecutor:
                     "附件没有下载成功——请检查飞书应用的 im:resource 权限"))
             return ExecResult(ok=False, error=(
                 f"OCR 没有从 {len(images)} 张图片里识别出可用字段"
-                f"（来源：{config.ocr_source}）"))
+                f"（来源：{config.ocr_source}）"), error_step="OCR")
 
         # 2) MAPPING：字段 → 品种属性（OCR + 固定补充），再让消息里的 k=v 覆盖
         started = time.time()
@@ -199,8 +215,11 @@ class FormPilotExecutor:
                 [f"[{r.get('property')}] {str(r.get('message'))[:80]}"
                  for r in problems][:3]
                 + [f"回读不一致 {len(issues)} 项" for _ in [0] if issues])
+            first = problems[0] if problems else {}
             return ExecResult(ok=False, error=reason or "填表失败",
-                              screenshot=outcome.get("screenshot", ""))
+                              screenshot=outcome.get("screenshot", ""),
+                              error_step="FILLING",
+                              error_property=str(first.get("property") or ""))
 
         filled = [r for r in report if str(r.get("status")) == "filled"]
         submit_error = str(outcome.get("submit_error") or "")
@@ -210,7 +229,8 @@ class FormPilotExecutor:
                               screenshot=outcome.get("screenshot", ""),
                               applicant=str(fields.get("姓名")
                                             or values.get("学生姓名") or ""),
-                              filled_fields=len(filled))
+                              filled_fields=len(filled),
+                              error_step="SUBMITTED")
         submitted = bool(outcome.get("submitted"))
         if submitted:
             note_step("SUBMITTED", ok=True,
@@ -309,8 +329,9 @@ class FormPilotExecutor:
         floor = resolve_period_floor(self.period_start_floor)
         if floor is None:
             return {}
-        start = floor
-        end = floor + timedelta(days=max(0, int(config.period_days)))
+        # 自愈放宽过下限的话，按偏移量往后挪（见 adjust_period_floor）
+        start = floor + timedelta(days=max(0, int(self.period_floor_offset_days)))
+        end = start + timedelta(days=max(0, int(config.period_days)))
         return {"保险期间起": start.isoformat(),
                 "保险期间止": end.isoformat()}
 

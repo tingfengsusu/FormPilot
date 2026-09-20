@@ -1,0 +1,58 @@
+# 异常自愈的种子案例（**可以手改**，也可以由运行时的未命中自动追加到库里）
+#
+# 症状 → 处置。处置动作必须在 heal/remedies.py 的白名单里：
+#   adjust_period_floor  放宽起期下限 N 天再试      ✅ 自动
+#   retry_after          等 N 秒重试（限流/网络）   ✅ 自动
+#   dismiss_overlay      关掉遮挡的弹窗后重试       ✅ 自动
+#   reload_page          重新加载页面               ✅ 自动
+#   switch_locator       换备用 locator             ⚠️ 只给建议（要改配置）
+#   manual               转人工                     ❌ 只给建议
+#
+# 这些案例全部来自 2026-09-19~20 的真机验证（见 README「批量投保」与
+# 《改造设计-异常自愈知识库.md》第一节的故障表）。
+#
+# 注意：**不需要手写 signature**——装载时按 symptom 自动推导
+# （heal.features.signature_of），这样同一个故障「换了个日期/超时数字」
+# 仍然算同一个签名、仍然能命中。
+
+cases:
+  # ① 页面日期列从「明天」开始，填今天报「不可选」→ 放宽起期下限
+  - symptom: 日期选择器结构不识别或日期不可选（目标 2026-09-20）
+    step: FILLING
+    property: 保险期间起
+    cause: 投保页的起期日期列只允许「明天」及之后
+    remedy: adjust_period_floor
+    params: {days: 1}
+
+  # ② 站点限流 / 页面加载被中断（net::ERR_ABORTED、空文档）
+  - symptom: Page.goto net ERR_ABORTED 或页面返回空文档（站点限流）
+    step: FILLING
+    cause: 投保站点有访问频率限制，短时间多次访问会被拒
+    remedy: retry_after
+    params: {seconds: 30}
+
+  # ③ 点击被遮罩拦截（投保须知弹窗会「点了又弹」）
+  - symptom: element intercepts pointer events van-overlay 拦截了点击
+    step: FILLING
+    cause: 投保须知弹窗每次点击表单后重新弹出，全屏遮罩拦住点击
+    remedy: dismiss_overlay
+
+  # ④ 页面渲染失败 / 登录态失效导致拿不到表单
+  - symptom: 页面上未找到「学校名称」或等待输入框超时（页面未渲染）
+    step: OCR
+    cause: SPA 渲染超时或登录态失效
+    remedy: reload_page
+
+  # ⑤ 台账写法不在页面选项集合内 → 需要人补别名表（只给建议）
+  - symptom: 「清花园」不在页面选项/别名表中（需人工确认后补别名，不猜）
+    step: MAPPING
+    cause: OCR/台账写法与页面选项文本对不上
+    remedy: manual
+    params: {hint: 补 config/*_aliases.yaml 别名表（先跑 tools/probe_options.py --check）}
+
+  # ⑥ 活动链接过期 → 需要人换二维码（只给建议）
+  - symptom: 活动不存在或已下线 ERR-2021
+    step: FILLING
+    cause: 投保活动链接带活动参数，会过期
+    remedy: manual
+    params: {hint: 二维码链接已过期，请在微信里重新保存二维码再更新品种 target_url}

@@ -36,6 +36,8 @@ from executor.run import (DEFAULT_WAIT_SECONDS, FormPilotExecutor,
 from gateway.aggregator import DEFAULT_HOLD_SECONDS, MessageAggregator
 from gateway.console import ConsoleChannel, make_demo_messages
 from gateway.feishu import FeishuChannel
+from heal import Healer, HealStore
+from heal.remedies import HealContext
 from ledger import DEFAULT_MANUAL_SECONDS, Ledger
 from orchestrator import state as st
 from orchestrator.queue import TaskQueue, now_str
@@ -167,7 +169,9 @@ def _build(args) -> tuple:
     storage = config.get("storage") or {}
     ledger_cfg = config.get("ledger") or {}
 
-    db_path = storage.get("db_path") or "data/gateway.db"
+    # 库路径可以用环境变量覆盖（演示/测试时用独立库，别碰正在跑的机器人队列）
+    db_path = (os.environ.get("FORMPILOT_GATEWAY_DB")
+               or storage.get("db_path") or "data/gateway.db")
     db_path = db_path if os.path.isabs(db_path) else os.path.join(_PROJECT_ROOT, db_path)
     queue = TaskQueue(db_path)
     ledger = Ledger(db_path, manual_seconds=int(
@@ -199,7 +203,14 @@ def _build(args) -> tuple:
         on_event=lambda text, shot="", chat="": _push(queue, channel, text,
                                                      shot, chat),
         wait_seconds=float(exec_cfg.get("wait_seconds", DEFAULT_WAIT_SECONDS)))
-    return queue, executor, channel, config, ledger
+
+    # 异常自愈：案例库（与队列同库）+ 种子案例；自愈能力挂到执行器上
+    healer = Healer(HealStore(db_path), config.get("heal") or {})
+    seeded = healer.seed()
+    print(f"异常自愈：案例库 {len(healer.cases())} 条"
+          + (f"（本次装载种子 {seeded} 条）" if seeded else "")
+          + ("；已关闭" if not healer.enabled else ""))
+    return queue, executor, channel, config, ledger, healer
 
 
 def _is_submit_command(text: str) -> bool:
@@ -288,6 +299,9 @@ def _handle_message(queue: TaskQueue, executor: FormPilotExecutor,
     if _is_report_command(text):
         report = build_daily_report(queue, ledger)
         _reply_text(queue, channel, message, format_daily_report(report))
+        return
+    if _is_heal_command(text):
+        _reply_text(queue, channel, message, _heal_text(healer))
         return
     if _is_manual_command(text):
         task = _current_task(queue)
@@ -394,6 +408,27 @@ def _is_status_command(text: str) -> bool:
     return text in ("状态", "status", "/status", "队列")
 
 
+def _is_heal_command(text: str) -> bool:
+    return text in ("自愈", "案例", "故障库", "/heal")
+
+
+def _heal_text(healer) -> str:
+    """自愈统计 + 案例清单（聊天里发「自愈」看）。"""
+    if healer is None:
+        return "异常自愈未启用"
+    stats = healer.stats()
+    lines = [stats.describe()]
+    cases = healer.cases()
+    if cases:
+        lines.append("案例库：")
+        lines += [f"  · {case.describe()}" for case in cases[:8]]
+    return "\n".join(lines)
+
+
+def _print_heal(healer) -> None:
+    print("\n"  + _heal_text(healer))
+
+
 def _is_report_command(text: str) -> bool:
     return text in ("报表", "日报", "report", "/report")
 
@@ -442,6 +477,8 @@ def main(argv=None) -> int:
     parser.add_argument("--status", action="store_true", help="只打印队列状态")
     parser.add_argument("--report", metavar="日期", nargs="?", const="",
                         help="打印日报表（默认今天；可给 2026-09-20）")
+    parser.add_argument("--heal", action="store_true",
+                        help="看自愈案例库与命中统计")
     parser.add_argument("--once", action="store_true",
                         help="把现有任务消费完就退出（不连飞书）")
     parser.add_argument("--max-tasks", type=int, default=0, metavar="N",
@@ -455,9 +492,12 @@ def main(argv=None) -> int:
         if not _acquire_lock(force=args.force):
             return 2
 
-    queue, executor, channel, config, ledger = _build(args)
-    if args.status or args.report is not None:
+    queue, executor, channel, config, ledger, healer = _build(args)
+    if args.status or args.report is not None or args.heal:
         try:
+            if args.heal:
+                _print_heal(healer)
+                return 0
             if args.report is not None:
                 report = build_daily_report(queue, ledger, day=args.report)
                 print(format_daily_report(report))
@@ -474,6 +514,11 @@ def main(argv=None) -> int:
                         worker_cfg.get("retry_backoff_seconds", 5)),
                     ledger=ledger,
                     alert_mention=str(alert_cfg.get("mention") or ""),
+                    healer=healer,
+                    heal_context=HealContext(
+                        # 自愈能动的只有「起期下限」这类可逆参数，且由执行器提供实现
+                        adjust_period_floor=getattr(
+                            executor, "adjust_period_floor", None)),
                     )
     max_tasks = args.max_tasks or None
     # 飞书不支持「文本+图片」同条消息（会推两条事件）→ 等对方补全后合并成一条任务
@@ -495,6 +540,7 @@ def main(argv=None) -> int:
         print(report.summary)
         _print_tasks(queue, report)
         _print_daily(queue, ledger, alert_cfg)
+        _print_heal(healer)
         queue.close()
         ledger.close()
         return 0 if report.alerted == 0 else 1

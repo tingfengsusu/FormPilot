@@ -20,6 +20,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from gateway.models import OutboundResult
+from heal.features import extract_feature
+from heal.models import FailureFeature, REMEDY_MANUAL
+from heal.remedies import HealContext
 from report.alert import format_alert
 
 from . import state as st
@@ -34,6 +37,8 @@ class ExecResult:
     error: str = ""
     applicant: str = ""            # 被保人/客户名（写台账）
     filled_fields: int = 0         # 实际填了几个字段（写台账）
+    error_step: str = ""           # 失败发生在哪一步（自愈特征用）
+    error_property: str = ""       # 出问题的属性（自愈特征用）
 
     @property
     def text(self) -> str:
@@ -70,7 +75,9 @@ class Worker:
                  channel: Any = None, max_retries: int = 3,
                  retry_backoff_seconds: float = 5.0,
                  sleep: Optional[Callable[[float], None]] = None,
-                 ledger: Any = None, alert_mention: str = ""):
+                 ledger: Any = None, alert_mention: str = "",
+                 healer: Any = None,
+                 heal_context: Optional[HealContext] = None):
         self.queue = queue
         self.executor = executor
         self.channel = channel
@@ -82,6 +89,10 @@ class Worker:
         self.ledger = ledger
         #: 告警时 @谁（飞书 open_id；"all" = 所有人）
         self.alert_mention = alert_mention
+        #: 异常自愈（heal.Healer；None = 关闭）
+        self.healer = healer
+        #: 自愈能提供的上下文能力（如 adjust_period_floor / dismiss_overlay）
+        self.heal_context = heal_context or HealContext()
 
     # ------------------------------------------------------------------
     def run_once(self) -> Optional[Dict[str, Any]]:
@@ -106,6 +117,9 @@ class Worker:
                              note=f"完成：{result.summary or '已填写'}",
                              result=result.summary, screenshot=result.screenshot)
             self._record_ledger(task, result, elapsed)
+            if self.healer is not None:
+                # 这条任务上的自愈尝试结算成功（用于案例命中率统计）
+                self.healer.mark_task_success(task.id)
             if self.channel is not None:
                 self._reply(task, OutboundResult(
                     ok=True, text=f"{result.summary or '已填完'}"
@@ -113,6 +127,25 @@ class Worker:
                     screenshot=result.screenshot, task_id=task.id))
             record["status"] = st.DONE
             return record
+
+        # —— 异常自愈：先问案例库（设计文档第三节）——
+        feature = self._feature_of(task, result)
+        decision = self.healer.diagnose(feature) if self.healer else None
+        if (decision is not None and decision.matched and decision.auto
+                and self.healer.check_budget(task.id)):
+            outcome = self.healer.apply(decision, self._heal_context(task),
+                                        task_id=task.id)
+            self.queue.add_step(
+                task.id, "HEAL", ok=outcome.ok,
+                detail=f"healed_by=case#{decision.case.id}"
+                       f" {decision.case.remedy}：{outcome.detail}")
+            if outcome.applied:
+                self.healer.note_heal(task.id)
+                record["status"] = st.FAILED
+                record["healed"] = f"case#{decision.case.id} {decision.case.remedy}"
+                self.queue.schedule_retry(task.id, 0.0,
+                                          f"自愈：{outcome.detail}")
+                return record
 
         failed = self.queue.get(task.id)
         if failed is not None and failed.retry_count < self.max_retries:
@@ -125,6 +158,8 @@ class Worker:
             self.queue.set_status(task.id, st.FAILED,
                                   note=f"重试耗尽：{result.error}",
                                   result=result.error)
+            if self.healer is not None:
+                self.healer.mark_task_failed(task.id)
             self.queue.set_status(task.id, st.ALERT,
                                   note=f"重试耗尽：{result.error}",
                                   result=result.error)
@@ -133,10 +168,49 @@ class Worker:
                     ok=False, text=format_alert(
                         f"处理失败（已重试 {self.max_retries} 次）：{result.error}"
                         f"——需要人工介入",
-                        mention=self._mention(), task_id=task.id),
+                        mention=self._mention(), task_id=task.id)
+                    + self._heal_hint(feature, decision),
                     task_id=task.id))
             record["status"] = st.ALERT
         return record
+
+    # ------------------------------------------------------------------
+    # 异常自愈
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _feature_of(task: Task, result: ExecResult) -> FailureFeature:
+        """把执行器的失败变成自愈特征（步骤/属性/品种都能喂给检索）。"""
+        return extract_feature(
+            result.error or "处理失败",
+            step=getattr(result, "error_step", "") or "",
+            property_name=getattr(result, "error_property", "") or "",
+            variety=task.variety or "")
+
+    def _heal_context(self, task: Task) -> HealContext:
+        """构造处置上下文：worker 自己补上 sleep；其余能力由调用方注入。"""
+        base = self.heal_context
+        return HealContext(sleep=base.sleep or self._sleep,
+                           adjust_period_floor=base.adjust_period_floor,
+                           dismiss_overlay=base.dismiss_overlay,
+                           reload_page=base.reload_page,
+                           task_id=task.id)
+
+    def _heal_hint(self, feature: FailureFeature, decision: Any) -> str:
+        """告警里补上「案例库怎么看这件事」——命中给建议，未命中记新案例。"""
+        if self.healer is None:
+            return ""
+        if decision is not None and decision.matched:
+            return (f"\n案例库命中 #{decision.case.id}"
+                    f"（相似度 {decision.similarity:.2f}）：{decision.hint}"
+                    f"\n（该处置需人工确认，程序没有自动执行）")
+        case_id = self.healer.learn(feature.symptom, remedy=REMEDY_MANUAL,
+                                    step=feature.step,
+                                    property_name=feature.property_name,
+                                    variety=feature.variety)
+        if not case_id:
+            return ""
+        return (f"\n案例库未命中 → 已记为新案例 #{case_id}"
+                f"（人工确认处置后可启用，下次同类故障就能自愈）")
 
     def _advance_to(self, task_id: int, target: str, **kwargs) -> None:
         """把任务推进到 ``target``（必要时**补齐执行器没报的中间状态**）。

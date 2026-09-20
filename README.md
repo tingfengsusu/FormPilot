@@ -367,13 +367,25 @@ orchestrator/  SQLite 任务队列 + 单 worker
         ↓
 executor/      复用 FormPilot：证件照 OCR → 字段映射 → Playwright 填表 → 回读校验
         ↓
+heal/          异常自愈：失败先查案例库 → 命中已知处置就自动执行并重试
+        ↓
 ledger/        台账（manual_seconds vs auto_seconds）→ report/ 日报表与预警
         ↓
 回推            「已填完 + 截图」或「失败原因 + @负责人」
 ```
 
 **群里可以直接问**：发「状态」回队列计数，发「报表」回当日日报（处理量 / 成功率 /
-平均耗时 / 失败原因 Top5 / **提效：今日共节省 X 小时**）。
+平均耗时 / 失败原因 Top5 / **提效：今日共节省 X 小时**），发「自愈」回案例库与命中率。
+
+**异常自愈**（设计见《改造设计-异常自愈知识库.md》）：失败时先按**相似度**检索历史
+故障案例，命中且处置在白名单里（放宽起期下限 / 等 N 秒重试 / 关弹窗 / 重载页面）就
+**自动执行并重试**；未命中的故障**不猜**——记为新案例（先禁用）并转人工。
+看它怎么跑（不需浏览器/凭据，跑在临时库上）：
+
+```bash
+python tools/demo_heal.py        # 已知故障自愈成功 + 未知故障转人工，全程打印
+python tools/feishu_bot.py --heal   # 案例库与命中统计
+```
 
 **先跑离线闭环（不需要飞书凭据、不联网、不碰真实页面）**：
 
@@ -400,10 +412,11 @@ python tools/feishu_bot.py --report           # 日报表（含提效数据）
 
 模块与设计文档的对应：`gateway/`（4.1 接入层）、`orchestrator/`（4.2 队列与编排）、
 `executor/`（4.3 执行层，薄封装复用现有代码）、`ledger/`（4.4 台账与提效数据）、
-`report/`（4.5 日报表 + 异常预警）、`config/gateway*.yaml`（凭据与品种映射）。
+`report/`（4.5 日报表 + 异常预警）、`heal/`（§5 集成点 1 异常自愈知识库）、
+`config/gateway*.yaml` 与 `config/heal_cases.yaml`（凭据、品种映射、自愈种子案例）。
 
-尚未做的（设计文档剩余项）：导出到飞书多维表格（`ledger/export.py`）、
-异常自愈知识库（P2）、企微通道、Vue 面板（P3）。
+尚未做的：导出到飞书多维表格（`ledger/export.py`）、自愈案例的向量检索（P2，
+计划复用 MemVault 的 Chroma + bge-small-zh + FTS5/RRF）、企微通道、Vue 面板。
 
 ---
 
@@ -474,6 +487,7 @@ python tests/test_gateway.py             # 统一消息模型 + 飞书事件解�
 python tests/test_orchestrator.py        # 任务状态机 + 幂等队列 + worker 重试/告警
 python tests/test_executor.py            # 品种匹配 + 字段映射 + 执行链路（假 OCR/填表）
 python tests/test_report.py              # 台账提效数据 + 日报表 + 异常预警 @负责人
+python tests/test_heal.py                # 异常自愈：命中/不猜/只给建议/防死循环（6 条验收）
 
 # GUI 离屏烟雾测试（属性管理/向导/批量页，不开窗口）
 python tools/smoke_property_ui.py
