@@ -165,6 +165,35 @@ def test_product_page_edit_roundtrip():
         assert page.table.rowCount() == 0 and page.name_edit.text() == ""
 
 
+def test_product_page_toolbar_button_returns_instead_of_resetting():
+    """工具栏「+ 新建品种」在品种页上时 = 返回主界面（不能把表单清空重开）。"""
+    window = MainWindow()
+    window._open_product_page(None)
+    assert window.stack.currentWidget() is window.product_page
+
+    window.new_action.trigger()                    # 顶左：此时文案是「⬅ 返回主界面」
+    assert window.stack.currentIndex() == 0, "顶左按钮应返回主界面"
+
+
+def test_product_page_warns_before_dropping_edits():
+    """未保存修改的判定（离开前的提醒就靠它；这里只测判定，不弹窗）。"""
+    from core.product_library import ProductLibrary
+    from core.property_def import PropertyDefLibrary
+    from gui.product_page import ProductPage
+
+    with tempfile.TemporaryDirectory() as td:
+        page = ProductPage(library=ProductLibrary(library_dir=td),
+                           prop_def_library=PropertyDefLibrary())
+        page.load_product(None)
+        assert page.has_unsaved_changes() is False     # 刚打开：干净
+
+        page.name_edit.setText("草稿品种")
+        assert page.has_unsaved_changes() is True      # 改了名字
+
+        page.name_edit.setText("")
+        assert page.has_unsaved_changes() is False     # 改回去：又干净了
+
+
 def main() -> int:
     test_business_page_offers_two_actions()
     print("  · 业务页两张操作卡 ✓")
@@ -174,6 +203,10 @@ def main() -> int:
     print("  · 批量页品种选择器（默认取配方、运行用所选）✓")
     test_product_page_edit_roundtrip()
     print("  · 品种编辑页：载入 → 改 → 保存 ✓")
+    test_product_page_toolbar_button_returns_instead_of_resetting()
+    print("  · 顶左按钮在品种页上 = 返回（不清空表单）✓")
+    test_product_page_warns_before_dropping_edits()
+    print("  · 未保存修改判定 ✓")
     test_load_record_from_file_maps_columns_to_properties()
     print("  · 载入数据：列名字典 → 品种属性名 ✓")
     print("test_gui_nav.py 全部通过 ✓")

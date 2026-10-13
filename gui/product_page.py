@@ -88,6 +88,8 @@ class ProductPage(QWidget):
         self._original_name = ""
         #: 表格里没暴露的字段（编辑时原样保留，避免保存后丢配置）
         self._extra: dict = {}
+        #: 载入时的快照（离开前提醒"有未保存修改"用）
+        self._loaded_snapshot: tuple = tuple()
 
         outer = QVBoxLayout(self)
         outer.addLayout(self._build_header())
@@ -227,6 +229,7 @@ class ProductPage(QWidget):
             self.wechat_check.setChecked(False)
             self._set_title("")          # 别留着上一个品种的标题（自测截图抓到的 bug）
             self.status_label.setText("新建品种：填名称 → 加属性 → 扫描 locator")
+            self._loaded_snapshot = self._snapshot()
             return
 
         self._original_name = product.name
@@ -247,6 +250,7 @@ class ProductPage(QWidget):
                              mapping.verify_after_fill, mapping.fill_mode)
         self.status_label.setText(f"已载入：{product.name}")
         self._set_title(product.name)
+        self._loaded_snapshot = self._snapshot()
 
     def collect_product(self) -> Product:
         """把表单读成 Product（未填 locator 的属性保留 locator 为空）。"""
@@ -274,6 +278,33 @@ class ProductPage(QWidget):
             required_sources=list(self._extra.get("required_sources", [])),
             context=context,
         )
+
+    # ------------------------------------------------------------------
+    # 未保存修改的提醒
+    # ------------------------------------------------------------------
+    def _snapshot(self) -> tuple:
+        """当前表单的可比较快照（只取影响配置的字段）。"""
+        product = self.collect_product()
+        return (
+            product.name, product.description, product.target_url,
+            tuple(sorted((str(k), str(v)) for k, v in product.context.items())),
+            tuple((m.property, m.locator, m.required, m.verify_after_fill,
+                   m.fill_mode) for m in product.field_mapping),
+        )
+
+    def has_unsaved_changes(self) -> bool:
+        """与载入时相比有没有改动。"""
+        return self._snapshot() != self._loaded_snapshot
+
+    def confirm_leave(self) -> bool:
+        """离开前确认：有未保存修改就问一句（避免返回把一屏编辑吃掉）。"""
+        if not self.has_unsaved_changes():
+            return True
+        answer = QMessageBox.question(
+            self, "有未保存的修改",
+            "这个品种有改动还没保存，确定离开吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        return answer == QMessageBox.Yes
 
     # ------------------------------------------------------------------
     # 动作
@@ -383,6 +414,7 @@ class ProductPage(QWidget):
 
         self._original_name = product.name
         self._set_title(product.name)
+        self._loaded_snapshot = self._snapshot()
         self.status_label.setText(f"已保存：{path}")
         self.saved.emit(product.name)
         return True

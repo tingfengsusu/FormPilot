@@ -83,7 +83,15 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
     def _show_main_page(self):
-        """从内部页面返回三栏工作区，并按更新后的属性库重建属性面板。"""
+        """从内部页面返回三栏工作区，并按更新后的属性库重建属性面板。
+
+        这是所有"返回"路径的唯一出口 —— 品种编辑页有未保存修改时先问一句，
+        免得返回把一屏编辑悄悄吃掉。
+        """
+        if (self.product_page is not None
+                and self.stack.currentWidget() is self.product_page
+                and not self.product_page.confirm_leave()):
+            return
         self.stack.setCurrentIndex(0)
         self.prop_mgmt_action.setText("🏷️ 属性管理")
         self.business_action.setText("🏢 保险")
@@ -175,7 +183,15 @@ class MainWindow(QMainWindow):
         return values
 
     def _on_new_product(self):
-        """打开品种编辑页（新建）。"""
+        """工具栏「+ 新建品种」：打开品种编辑页（新建）。
+
+        已经站在品种页上时，这个按钮的文案是「⬅ 返回主界面」——那就返回，
+        而不是再把表单清空重开（原来就是这样，用户反馈"左上角返回不好用"）。
+        """
+        if (self.product_page is not None
+                and self.stack.currentWidget() is self.product_page):
+            self._show_main_page()
+            return
         self._open_product_page(None)
 
     def _on_edit_product(self, name: str):
