@@ -102,6 +102,8 @@ class FillResult:
     submitted: bool = False
     error: str = ""
     needs_human: str = ""
+    #: 不必停下、但要提醒人工补一步（如"页面有验证码，需人工填写"）
+    manual_hint: str = ""
 
     @property
     def filled_fields(self) -> int:

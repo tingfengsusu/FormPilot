@@ -35,6 +35,10 @@ class FieldMapping:
     #            一旦回读出问题，批注与报告仍会把它挑出来
     #   spot     降级为抽查（呈现沿用 human，抽查统计留给后续实现）
     verify_tier: str = "human"
+    # 值转换规则（引擎在填写前应用）："" 不转换 / strip / digits /
+    # date:YYYY-MM-DD / date:YYYYMMDD / date:YYYY/MM/DD / date:YYYY年MM月DD日
+    # —— 数据里的日期写法常与页面要求不同（发票查验要 YYYYMMDD 就是实测例子）
+    transform: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> "FieldMapping":
@@ -46,6 +50,7 @@ class FieldMapping:
             rule=data.get("rule"),
             fill_mode=data.get("fill_mode", "plain") or "plain",
             verify_tier=data.get("verify_tier", "human") or "human",
+            transform=str(data.get("transform", "") or ""),
         )
 
 
@@ -99,6 +104,7 @@ class Product:
                     **({"fill_mode": m.fill_mode} if m.fill_mode != "plain" else {}),
                     **({"verify_tier": m.verify_tier}
                        if m.verify_tier != "human" else {}),
+                    **({"transform": m.transform} if m.transform else {}),
                 }
                 for m in self.field_mapping
             ],

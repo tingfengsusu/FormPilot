@@ -1,0 +1,47 @@
+# 发票查验（国家税务总局全国增值税发票查验平台）
+#
+# 实测（2026-10，探针 tools/probe_candidates.py）：
+#   - 页面用 TDesign 组件，**所有 input 都没有 id/name**，所以 locator 一律用
+#     「标签锚定」：div.t-form__item:has-text("发票代码") input.t-input__inner
+#     —— 按位置写 input >> nth=N 也能填上，但填错框时回读仍然"一致"（写进去的就是那个值），
+#        错误不会被发现，所以不用位置索引
+#   - 「开票日期」是只读的日期选择组件，placeholder 为 YYYYMMDD **且要按 YYYYMMDD 提交**
+#     → transform: date:YYYYMMDD（数据里写 2026-10-20 也能填对）
+#   - 「验证码」**不放进 field_mapping**：引擎不碰它，由 blockers 检测出"有验证码字段"
+#     并提示"需人工填写"；人填完验证码后自己点「查 验」
+#
+# 用法：主界面选本品，或用批量页选它（批量意义不大：每张发票要人工输验证码）
+
+name: 发票查验_国税总局
+description: 全国增值税发票查验平台（4 个字段自动填 + 验证码人工）
+
+target_url: https://inv-veri.chinatax.gov.cn/
+
+field_mapping:
+  - property: 发票代码
+    locator: 'div.t-form__item:has-text("发票代码") input.t-input__inner'
+    required: false          # 电子发票（全电发票）没有发票代码，可留空
+    verify_after_fill: true
+
+  - property: 发票号码
+    locator: 'div.t-form__item:has-text("发票号码") input.t-input__inner'
+    required: true
+    verify_after_fill: true
+
+  # 开票日期：数据里 2026-10-20 → 页面要 20261020（这就是"日期格式转换"的活例子）
+  - property: 开票日期
+    locator: 'div.t-date-picker input'
+    required: true
+    verify_after_fill: true
+    fill_mode: date
+    transform: date:YYYYMMDD
+
+  - property: 开具金额
+    locator: 'div.t-form__item:has-text("开具金额") input.t-input__inner'
+    required: true
+    verify_after_fill: true
+
+  # 验证码：故意不配 —— 引擎不填，检测到后提示人工补
+
+submit_button: 'button[type="submit"]'
+verify_delay_ms: 500

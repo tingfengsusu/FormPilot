@@ -280,6 +280,8 @@ class BatchRunner:
             result.screenshot = fill.screenshot
             result.status = STATUS_TO_REVIEW
             note = "批量录入完成" + (f"（{period_note}）" if period_note else "")
+            if fill.manual_hint:
+                note += f"（{fill.manual_hint}）"     # 如"页面有验证码，需人工填写"
             self.db.update_fields(applicant.id, screenshot=fill.screenshot)
             self.db.set_status(applicant.id, STATUS_TO_REVIEW,
                                operator="system", note=note)

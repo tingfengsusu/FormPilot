@@ -142,6 +142,9 @@ class FormFiller:
 
         from .overlay import dismiss_blocking_popups
 
+        # 值转换（品种里声明的格式规则，如日期 → YYYYMMDD）：填之前先规范一遍
+        self._apply_transforms()
+
         # 实测：投保页的「投保须知」弹窗会**在每次点击表单后重新弹出**，
         # 不先关掉的话所有点击都被遮罩拦截（报错像「点击超时」，很误导）
         dismiss_blocking_popups(page)
@@ -237,6 +240,28 @@ class FormFiller:
         self._last_report = report
         self._last_issues = issues
         return report
+
+    def _apply_transforms(self) -> None:
+        """按品种声明的规则规范属性池里的值（就地更新，重试时幂等）。
+
+        例：数据里 ``2026-10-20`` + 规则 ``date:YYYYMMDD`` → 页面收到 ``20261020``。
+        解析不了的日期**原样返回**（不猜），回读校验会把它暴露成不一致。
+        """
+        from engine.transforms import apply_transform
+
+        changed: Dict[str, Any] = {}
+        for mapping in self.product.field_mapping:
+            rule = str(getattr(mapping, "transform", "") or "")
+            if not rule:
+                continue
+            value = self.pool.get(mapping.property)
+            if value is None or str(value).strip() == "":
+                continue
+            new_value = apply_transform(value, rule)
+            if new_value != str(value):
+                changed[mapping.property] = new_value
+        if changed:
+            self.pool.feed_dict(changed)
 
     @staticmethod
     def _fill_field(page: Any, locator: str, value: str,
@@ -424,6 +449,7 @@ class FormFiller:
 
     def _mock_fill(self) -> List[Dict[str, Any]]:
         """模拟填表：仅做「值可用性」检查，返回填充报告。"""
+        self._apply_transforms()
         report: List[Dict[str, Any]] = []
         for mapping in self.product.field_mapping:
             value, rule_note = self._resolve_value(mapping)

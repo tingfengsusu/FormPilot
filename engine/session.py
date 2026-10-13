@@ -14,7 +14,7 @@ import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from .blockers import detect_blocker
+from .blockers import Blocker, detect_blocker
 from .models import BAD_STATUSES, FillEvent, FillResult, OpenSpec
 
 #: 单条问题的截断长度：点击超时日志很长，不截断会把后面的问题挤掉（实测只看到第一条）
@@ -139,7 +139,7 @@ class FillSession:
 
         for attempt in range(1, max(1, int(max_attempts)) + 1):
             result.attempts = attempt
-            blocker = ""
+            blocker = Blocker()
             try:
                 report, blocker = self._fill_once(pool, submit=submit)
                 problems = problems_of(report)
@@ -147,12 +147,17 @@ class FillSession:
                 report, problems = [], [f"填表异常：{e}"]
                 result.error = str(e)
             result.report = report
-            if blocker:
-                # 验证码/登录墙：重试只会再遇到同一个，直接转人工（不填、不提交）
-                result.needs_human = blocker
+            if blocker.wall:
+                # 整页拦截（滑块/全屏验证/登录墙）：重试只会再遇到，直接转人工
+                result.needs_human = blocker.wall
                 result.problems = []
-                self._emit(FillEvent.BLOCKED, label=label, reason=blocker)
+                self._emit(FillEvent.BLOCKED, label=label, reason=blocker.wall)
                 break
+            if blocker.captcha_field:
+                # 只是有个验证码框：其余字段照填，这一步留人工（发票查验就是这种）
+                result.manual_hint = blocker.manual_hint
+                self._emit(FillEvent.BLOCKED, label=label,
+                           reason=blocker.manual_hint)
             self._emit(FillEvent.FIELD_VERIFIED, label=label, attempt=attempt,
                        filled=sum(1 for e in report if e.get("status") == "filled"),
                        problems=len(problems))
@@ -209,11 +214,11 @@ class FillSession:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
-    def _fill_once(self, pool: Any, *, submit: bool) -> Tuple[List[Dict[str, Any]], str]:
+    def _fill_once(self, pool: Any, *, submit: bool) -> Tuple[List[Dict[str, Any]], Blocker]:
         """填一次表单（Mock / 无页面 → 模拟填写路径）。
 
-        :return: (填充报告, 需人工的原因) —— 页面被验证码/登录墙拦住时报告为空、
-            原因非空，调用方据此转人工（不填、不提交）。
+        :return: (填充报告, 拦截情况) —— 整页墙时报告为空、调用方停下转人工；
+            只是验证码字段时报告照常，由调用方记一条 manual_hint。
         """
         if self.filler_factory is not None:
             filler = self.filler_factory(self.product, pool)
@@ -225,18 +230,18 @@ class FillSession:
         if self.mock or self._page is None:
             fill_mock = getattr(filler, "fill_mock", None)
             return (fill_mock() if callable(fill_mock)
-                    else filler.fill(headless=True)), ""
+                    else filler.fill(headless=True)), Blocker()
 
         filler.open_form(self._page)
         self._emit(FillEvent.FORM_OPENED, url=self.open_spec.url)
         blocker = detect_blocker(self._page)
-        if blocker:
+        if blocker.wall:
             return [], blocker
         report = filler.fill_on_page(self._page)
         # 保持既有行为：提交发生在回读评估之前（收紧时机需要业务侧确认）
         if submit:
             self.submit_now()
-        return report, ""
+        return report, blocker
 
     def _emit(self, event: FillEvent, **payload: Any) -> None:
         if self.on_event is None:

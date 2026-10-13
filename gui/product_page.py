@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
 from core.product import FieldMapping, Product
 from core.product_library import ProductLibrary
 from core.property_def import PropertyDefLibrary
+from engine.transforms import TRANSFORMS, suggest_transform
 
 from .theme import mark
 
@@ -153,14 +154,14 @@ class ProductPage(QWidget):
         box = QGroupBox("属性（这张页面要填什么）")
         layout = QVBoxLayout(box)
 
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["属性", "locator", "必填", "回读校验", "填写策略"])
+            ["属性", "locator", "必填", "回读校验", "填写策略", "转换"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        for col in (2, 3, 4):
+        for col in (2, 3, 4, 5):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         layout.addWidget(self.table, 1)
 
@@ -179,7 +180,7 @@ class ProductPage(QWidget):
         del_btn.clicked.connect(self.delete_rows)
         row.addWidget(del_btn)
         row.addStretch()
-        hint = QLabel("回读校验 = 填完读回比对；识别/级联/日期类字段建议保持勾选")
+        hint = QLabel("回读校验 = 填完读回比对；转换 = 值格式规范化（如 日期 → YYYYMMDD）")
         mark(hint, "hint")
         row.addWidget(hint)
         layout.addLayout(row)
@@ -247,7 +248,8 @@ class ProductPage(QWidget):
         self.referer_edit.setText(str(context.get("referer") or ""))
         for mapping in product.field_mapping:
             self._append_row(mapping.property, mapping.locator, mapping.required,
-                             mapping.verify_after_fill, mapping.fill_mode)
+                             mapping.verify_after_fill, mapping.fill_mode,
+                             getattr(mapping, "transform", ""))
         self.status_label.setText(f"已载入：{product.name}")
         self._set_title(product.name)
         self._loaded_snapshot = self._snapshot()
@@ -266,6 +268,7 @@ class ProductPage(QWidget):
                 required=self._cell_checked(row, 2),
                 verify_after_fill=self._cell_checked(row, 3),
                 fill_mode=mode,
+                transform=self._row_transform(row),
             ))
         context = self._collect_context()
         return Product(
@@ -352,13 +355,30 @@ class ProductPage(QWidget):
             self.status_label.setText("扫描失败（可手工填 locator）")
             return
 
+        by_locator = {f.get("locator"): f for f in fields or []}
         hits = 0
+        suggested = 0
         for row in range(self.table.rowCount()):
             locator = mapping.get(self._cell_text(row, 0)) or ""
-            if locator:
-                self._set_cell_text(row, 1, locator)
-                hits += 1
-        self.status_label.setText(f"扫描完成：{hits}/{len(properties)} 个属性命中 locator")
+            if not locator:
+                continue
+            self._set_cell_text(row, 1, locator)
+            hits += 1
+            # 识别页面要求的格式（如 placeholder=YYYYMMDD）→ 默认选中对应转换
+            field = by_locator.get(locator) or {}
+            rule = suggest_transform(str(field.get("placeholder") or ""),
+                                     str(field.get("label") or ""))
+            if rule:
+                combo = self.table.cellWidget(row, 5)
+                if isinstance(combo, QComboBox):
+                    index = combo.findData(rule)
+                    if index >= 0:
+                        combo.setCurrentIndex(index)
+                        suggested += 1
+        note = f"扫描完成：{hits}/{len(properties)} 个属性命中 locator"
+        if suggested:
+            note += f"，{suggested} 个识别到值格式（已默认选中「转换」）"
+        self.status_label.setText(note)
 
     def import_url_from_qr(self) -> None:
         """从二维码图片解出真实 URL（微信 H5 场景）。"""
@@ -459,7 +479,7 @@ class ProductPage(QWidget):
     # 表格辅助
     # ------------------------------------------------------------------
     def _append_row(self, prop: str, locator: str, required: bool,
-                    verify: bool, fill_mode: str) -> int:
+                    verify: bool, fill_mode: str, transform: str = "") -> int:
         row = self.table.rowCount()
         self.table.insertRow(row)
 
@@ -477,6 +497,14 @@ class ProductPage(QWidget):
         index = combo.findData(fill_mode or "plain")
         combo.setCurrentIndex(index if index >= 0 else 0)
         self.table.setCellWidget(row, 4, combo)
+
+        t_combo = QComboBox()
+        for rule, label in TRANSFORMS:
+            t_combo.addItem(label, rule)
+        t_combo.setToolTip("填之前把值规范成页面要求的格式（数据里 2026-10-20 → 页面要 20261020）")
+        t_index = t_combo.findData(transform or "")
+        t_combo.setCurrentIndex(t_index if t_index >= 0 else 0)
+        self.table.setCellWidget(row, 5, t_combo)
         return row
 
     def _property_names(self) -> List[str]:
@@ -499,6 +527,12 @@ class ProductPage(QWidget):
         if isinstance(combo, QComboBox):
             return str(combo.currentData() or "plain")
         return "plain"
+
+    def _row_transform(self, row: int) -> str:
+        combo = self.table.cellWidget(row, 5)
+        if isinstance(combo, QComboBox):
+            return str(combo.currentData() or "")
+        return ""
 
     def _cell_text(self, row: int, col: int) -> str:
         item = self.table.item(row, col)
@@ -523,13 +557,13 @@ class ProductPage(QWidget):
         new_row = row + delta
         if not (0 <= new_row < self.table.rowCount()):
             return
-        # 用「快照 → 交换」实现整行搬移（含勾选状态与下拉）
+        # 用「快照 → 交换」实现整行搬移（含勾选状态与两个下拉）
         snapshot = [self._cell_text(row, 0), self._cell_text(row, 1),
                     self._cell_checked(row, 2), self._cell_checked(row, 3),
-                    self._row_mode(row)]
+                    self._row_mode(row), self._row_transform(row)]
         other = [self._cell_text(new_row, 0), self._cell_text(new_row, 1),
                  self._cell_checked(new_row, 2), self._cell_checked(new_row, 3),
-                 self._row_mode(new_row)]
+                 self._row_mode(new_row), self._row_transform(new_row)]
         for target, data in ((row, other), (new_row, snapshot)):
             self._set_cell_text(target, 0, data[0])
             self._set_cell_text(target, 1, data[1])
@@ -537,9 +571,10 @@ class ProductPage(QWidget):
                 Qt.Checked if data[2] else Qt.Unchecked)
             self.table.item(target, 3).setCheckState(
                 Qt.Checked if data[3] else Qt.Unchecked)
-            combo = self.table.cellWidget(target, 4)
-            if isinstance(combo, QComboBox):
-                combo.setCurrentIndex(combo.findData(data[4]))
+            for col, value in ((4, data[4]), (5, data[5])):
+                combo = self.table.cellWidget(target, col)
+                if isinstance(combo, QComboBox):
+                    combo.setCurrentIndex(combo.findData(value))
         self.table.selectRow(new_row)
 
     def _set_title(self, name: str) -> None:

@@ -165,18 +165,29 @@ def test_captcha_page_stops_and_needs_human():
     assert FillEvent.BLOCKED in events
 
 
-def test_captcha_image_is_detected():
-    """验证码图片（src 命中 captcha）同样算拦截。"""
+def test_captcha_field_does_not_block_filling():
+    """页面只是有个验证码框（发票查验就是）→ 其余字段照填，验证码留人工。"""
     if not browser_available():
         skip_test("浏览器不可用（未装 Playwright 或内核未下载）")
         return
 
-    html = _data_page('<input name="xm"><img src="/captcha.jpg">')
+    html = _data_page(
+        '<input name="fpdm" placeholder="请输入">'
+        '<div class="form-item-yzm"><label>*验证码</label>'
+        '<input name="yzm_code" placeholder="请输入"><img src="/captcha.jpg"></div>')
+    product = Product.from_dict({
+        "name": "验证码字段页", "target_url": html, "verify_delay_ms": 10,
+        "field_mapping": [{"property": "发票代码", "locator": 'input[name="fpdm"]'}],
+    })
     pool = PropertyPool()
-    pool.feed_dict({"姓名": "张三"})
-    result = FillEngine(_blocker_product(html), headless=True).fill_one(pool)
+    pool.feed_dict({"发票代码": "011002100311"})
 
-    assert not result.ok and "验证码" in result.needs_human
+    result = FillEngine(product, headless=True).fill_one(pool)
+
+    assert result.ok                       # 没被拦，正常填完
+    assert not result.needs_human          # 不是"整页墙"
+    assert "验证码" in result.manual_hint   # 但提醒人工补这一步
+    assert result.filled_fields == 1
 
 
 def test_plain_word_does_not_block():
@@ -205,6 +216,6 @@ if __name__ == "__main__":
     test_problems_of_truncates_long_messages()
     test_safe_filename_strips_illegal_chars()
     test_captcha_page_stops_and_needs_human()
-    test_captcha_image_is_detected()
+    test_captcha_field_does_not_block_filling()
     test_plain_word_does_not_block()
     print("test_engine_session.py 全部通过 ✓")
