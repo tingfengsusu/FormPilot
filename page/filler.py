@@ -46,6 +46,14 @@ class FormFiller:
 
         return self._real_fill(headless=headless)
 
+    def fill_mock(self) -> List[Dict[str, Any]]:
+        """显式走模拟填表（不碰浏览器）。
+
+        给引擎的 Mock 会话用：`fill()` 会按环境自动选真实/模拟，装了 Playwright
+        时会真开浏览器；这里明确只要值可用性检查，不受环境影响。
+        """
+        return self._mock_fill()
+
     # ------------------------------------------------------------------
     # 真实填表（Playwright）
     # ------------------------------------------------------------------

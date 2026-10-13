@@ -12,8 +12,8 @@
   支付永远人工 —— 这是设计里明确的人工卡点
 - **回读一致才算成功**：任一字段 missing/error/mismatch → 「录入失败」并写明原因
 
-本模块不依赖 Playwright：Mock 模式（或未安装 Playwright）下走
-`FormFiller.fill()` 的模拟填表路径，便于在没有浏览器的环境里跑测试与联调。
+浏览器会话与逐字段填写由 ``engine`` 包负责 —— 本模块不再直接驱动 Playwright，
+只做业务该做的四件事：取记录、算值（属性池）、写状态机与审计、决定截图路径。
 """
 from __future__ import annotations
 
@@ -21,20 +21,17 @@ import os
 import time
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from core.property_pool import PropertyPool
+from engine.runner import FillEngine, missing_mappings
+from engine.session import capture_page, safe_filename
 
 from .db import BatchDB
 from .models import (STATUS_CONFIRMED, STATUS_FILL_FAILED, STATUS_FILLING,
                      STATUS_TO_REVIEW, Applicant)
 from .recipe import Recipe
 from .validator import apply_period_floor, resolve_period_floor
-
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-#: 视为填表失败的字段状态。
-_BAD_STATUSES = ("error", "missing", "mismatch")
 
 
 @dataclass
@@ -89,13 +86,15 @@ class BatchRunner:
     def __init__(self, db: BatchDB, recipe: Optional[Recipe] = None,
                  screenshot_dir: str = "", today: Optional[date] = None,
                  filler_factory: Optional[Any] = None,
-                 submit: Optional[bool] = None):
+                 submit: Optional[bool] = None,
+                 on_event: Optional[Callable[[Any, Dict[str, Any]], None]] = None):
         self.db = db
         self.recipe = recipe or Recipe.load()
         self.screenshot_dir = screenshot_dir or self.recipe.storage_path(
             "screenshot_dir", "data/screenshots")
         self.today = today
         self.filler_factory = filler_factory
+        self.on_event = on_event
         self.submit = bool(self.recipe.execute.get("submit", False)) \
             if submit is None else bool(submit)
 
@@ -133,18 +132,14 @@ class BatchRunner:
             report.skipped = len(applicants)
             return report
 
-        if self._use_mock():
-            self._run_mock(applicants, product, report)
-        else:
-            self._run_playwright(applicants, product, report)
+        self._run_session(applicants, product, report)
         return report
 
     def _missing_mappings(self, product: Any) -> List[str]:
-        """品种里缺哪些必填字段的映射（缺了就不录，避免半张表）。"""
-        mapped = {mapping.property for mapping in getattr(product, "field_mapping", [])}
+        """品种里缺哪些必填字段的映射（预检交给引擎，措辞留在业务侧）。"""
         required = [str(p) for p in
                     (self.recipe.execute.get("required_properties") or [])]
-        return [prop for prop in required if prop not in mapped]
+        return missing_mappings(product, required)
 
     # ------------------------------------------------------------------
     # 取记录 / 建属性池
@@ -199,7 +194,7 @@ class BatchRunner:
         return apply_period_floor(applicant.period_start, applicant.period_end, floor)
 
     # ------------------------------------------------------------------
-    # Mock 路径（无浏览器）
+    # 执行（一条浏览器会话，串行填多条）
     # ------------------------------------------------------------------
     def _use_mock(self) -> bool:
         try:
@@ -214,52 +209,27 @@ class BatchRunner:
         except Exception:  # noqa: BLE001
             return True
 
-    def _run_mock(self, applicants: Sequence[Applicant], product: Any,
-                  report: RunReport) -> None:
-        for applicant in applicants:
-            self.db.set_status(applicant.id, STATUS_FILLING, operator="system",
-                               note="批量录入开始")
-            result = self._fill_record(applicant, product, page=None)
-            report.records.append(result)
-            if result.ok:
-                report.to_review += 1
-            else:
-                report.failed += 1
-            self._sleep(self.recipe.interval_seconds)
+    def _run_session(self, applicants: Sequence[Applicant], product: Any,
+                     report: RunReport) -> None:
+        """一条会话连续填多条；Mock 模式（或未装 Playwright）不开浏览器。"""
+        engine = FillEngine(product, headless=False, mock=self._use_mock(),
+                            filler_factory=self.filler_factory,
+                            on_event=self.on_event)
+        with engine.session() as session:
+            for applicant in applicants:
+                self.db.set_status(applicant.id, STATUS_FILLING,
+                                   operator="system", note="批量录入开始")
+                result = self._fill_record(applicant, product, session)
+                report.records.append(result)
+                if result.ok:
+                    report.to_review += 1
+                else:
+                    report.failed += 1
+                self._sleep(self.recipe.interval_seconds)
 
-    # ------------------------------------------------------------------
-    # Playwright 路径（一个会话，串行填多条）
-    # ------------------------------------------------------------------
-    def _run_playwright(self, applicants: Sequence[Applicant], product: Any,
-                        report: RunReport) -> None:
-        from playwright.sync_api import sync_playwright
-
-        from page.browser_context import create_context
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            try:
-                context = create_context(browser, product.context,
-                                         target_url=product.target_url)
-                page = context.new_page()
-                for applicant in applicants:
-                    self.db.set_status(applicant.id, STATUS_FILLING,
-                                       operator="system", note="批量录入开始")
-                    result = self._fill_record(applicant, product, page=page)
-                    report.records.append(result)
-                    if result.ok:
-                        report.to_review += 1
-                    else:
-                        report.failed += 1
-                    self._sleep(self.recipe.interval_seconds)
-            finally:
-                browser.close()
-
-    # ------------------------------------------------------------------
-    # 单条：填表 → 回读 → 截图 → 置状态（含重试）
-    # ------------------------------------------------------------------
     def _fill_record(self, applicant: Applicant, product: Any,
-                     page: Any) -> RecordResult:
+                     session: Any) -> RecordResult:
+        """单条：算值 → 交给引擎填（含重试）→ 按结果写状态。"""
         result = RecordResult(applicant_id=applicant.id, name=applicant.name)
         period_start, period_end, period_note = self.effective_period(applicant)
         result.period_note = period_note
@@ -268,94 +238,46 @@ class BatchRunner:
                                   period_end=period_end)
             applicant.period_start, applicant.period_end = period_start, period_end
 
-        pool = self.build_pool(applicant)
-        max_attempts = max(1, int(self.recipe.max_retries) + 1)
-        backoff = max(0.0, float(self.recipe.retry_backoff_seconds))
+        fill = session.fill(
+            self.build_pool(applicant),
+            submit=self.submit,
+            screenshot_path=self.screenshot_path(applicant),
+            max_attempts=max(1, int(self.recipe.max_retries) + 1),
+            backoff_seconds=max(0.0, float(self.recipe.retry_backoff_seconds)),
+            label=applicant.name,
+        )
+        result.attempts = fill.attempts
 
-        last_reason = ""
-        for attempt in range(1, max_attempts + 1):
-            result.attempts = attempt
-            try:
-                report = self._fill_once(product, pool, page)
-                problems = self._problems(report)
-            except Exception as e:  # noqa: BLE001 — 单条失败不影响同批其他条
-                problems = [f"填表异常：{e}"]
-            if not problems:
-                screenshot = self._screenshot(page, applicant)
-                result.screenshot = screenshot
-                result.status = STATUS_TO_REVIEW
-                note = "批量录入完成" + (f"（{period_note}）" if period_note else "")
-                self.db.update_fields(applicant.id, screenshot=screenshot)
-                self.db.set_status(applicant.id, STATUS_TO_REVIEW,
-                                   operator="system", note=note)
-                return result
-
-            last_reason = "；".join(problems)[:500]
-            if attempt < max_attempts:
-                self._sleep(backoff * (2 ** (attempt - 1)))
+        if fill.ok:
+            result.screenshot = fill.screenshot
+            result.status = STATUS_TO_REVIEW
+            note = "批量录入完成" + (f"（{period_note}）" if period_note else "")
+            self.db.update_fields(applicant.id, screenshot=fill.screenshot)
+            self.db.set_status(applicant.id, STATUS_TO_REVIEW,
+                               operator="system", note=note)
+            return result
 
         result.status = STATUS_FILL_FAILED
-        result.reason = last_reason
+        result.reason = "；".join(fill.problems)[:500]
         self.db.set_status(applicant.id, STATUS_FILL_FAILED, operator="system",
-                           note=f"批量录入失败（重试 {result.attempts} 次）",
-                           fail_reason=last_reason)
+                           note=f"批量录入失败（重试 {fill.attempts} 次）",
+                           fail_reason=result.reason)
         return result
 
-    def _fill_once(self, product: Any, pool: PropertyPool, page: Any
-                   ) -> List[Dict[str, Any]]:
-        """填一次表：Mock 走 fill()，真实走 open_form + fill_on_page（+ 可选提交）。"""
-        if self.filler_factory is not None:
-            filler = self.filler_factory(product, pool)
-        else:
-            from page.filler import FormFiller
-            filler = FormFiller(product, pool, browser_hold_seconds=0)
-
-        if page is None:
-            return filler.fill(headless=True)
-
-        filler.open_form(page)
-        report = filler.fill_on_page(page)
-        if self.submit:
-            self._submit(page, product)
-        return report
-
-    @staticmethod
-    def _submit(page: Any, product: Any) -> None:
-        """点提交按钮（默认不开：支付与提交是人工卡点，见设计文档第七节）。"""
-        from page.overlay import click_with_guard
-
-        click_with_guard(page, product.submit_button, timeout=5000)
-        page.wait_for_timeout(1500)
-
-    @staticmethod
-    def _problems(report: Sequence[Dict[str, Any]]) -> List[str]:
-        """从填充报告里挑出问题（missing / error / mismatch）。
-
-        每条截断到 160 字：Playwright 的点击超时日志很长，不截断的话
-        会把后面的问题挤掉（实测只看到第一条报错）。
-        """
-        problems: List[str] = []
-        for entry in report or []:
-            status = str(entry.get("status") or "")
-            if status in _BAD_STATUSES:
-                message = str(entry.get("message") or status)
-                problems.append(f"[{entry.get('property')}] {message[:160]}")
-        return problems
+    # ------------------------------------------------------------------
+    # 截图
+    # ------------------------------------------------------------------
+    def screenshot_path(self, applicant: Applicant) -> str:
+        """截图目标路径（只算路径、不建目录：Mock 模式不产截图）。"""
+        directory = os.path.join(self.screenshot_dir, str(applicant.batch_id))
+        return os.path.join(
+            directory, f"{applicant.id}_{safe_filename(applicant.name)}.png")
 
     def _screenshot(self, page: Any, applicant: Applicant) -> str:
-        """录入后截图（复核时只看截图，不用重看数据）。"""
+        """兼容入口：无页面 → 不产截图；有页面 → 存到截图目录。"""
         if page is None:
             return ""
-        directory = os.path.join(self.screenshot_dir, str(applicant.batch_id))
-        os.makedirs(directory, exist_ok=True)
-        safe_name = "".join(ch for ch in (applicant.name or "record")
-                            if ch not in '<>:"/\\|?*').strip() or "record"
-        path = os.path.join(directory, f"{applicant.id}_{safe_name}.png")
-        try:
-            page.screenshot(path=path, full_page=False)
-            return path
-        except Exception:  # noqa: BLE001 — 截图失败不应让整条记录失败
-            return ""
+        return capture_page(page, self.screenshot_path(applicant))
 
     @staticmethod
     def _sleep(seconds: float) -> None:
