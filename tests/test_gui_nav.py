@@ -110,6 +110,61 @@ def test_batch_page_has_product_selector():
             db.close()          # 不关连接的话临时目录删不掉（Windows 会占用）
 
 
+def test_product_page_edit_roundtrip():
+    """品种编辑页（单页，取代向导）：载入 → 改 → 收集一致 → 保存到临时库。"""
+    from PyQt5.QtCore import Qt
+
+    from core.product import Product
+    from core.product_library import ProductLibrary
+    from core.property_def import PropertyDefLibrary
+    from gui.product_page import ProductPage
+
+    with tempfile.TemporaryDirectory() as td:
+        library = ProductLibrary(library_dir=td)
+        page = ProductPage(library=library,
+                           prop_def_library=PropertyDefLibrary())
+        product = Product.from_dict({
+            "name": "测试品种", "description": "描述",
+            "target_url": "https://example.com/f",
+            "context": {"mobile": True, "wechat": True,
+                        "referer": "https://example.com"},
+            "field_mapping": [
+                {"property": "学生姓名", "locator": 'input[name="xm"]'},
+                {"property": "年级", "locator": "div.grade",
+                 "verify_after_fill": False, "fill_mode": "select"},
+            ],
+        })
+
+        page.load_product(product)
+        assert page.name_edit.text() == "测试品种"
+        assert page.table.rowCount() == 2
+        assert page.mobile_check.isChecked() and page.wechat_check.isChecked()
+
+        # 改：换 locator + 取消「学生姓名」的回读校验
+        page._set_cell_text(0, 1, 'input[name="xm2"]')
+        page.table.item(0, 3).setCheckState(Qt.Unchecked)
+
+        back = page.collect_product()
+        assert back.name == "测试品种" and back.description == "描述"
+        assert back.target_url == "https://example.com/f"
+        assert back.context["mobile"] is True
+        assert back.context["referer"] == "https://example.com"
+        assert back.field_mapping[0].locator == 'input[name="xm2"]'
+        assert back.field_mapping[0].verify_after_fill is False
+        assert back.field_mapping[1].fill_mode == "select"
+        assert back.field_mapping[1].verify_after_fill is False
+
+        # 保存到临时库（不碰仓库里的 config/product_library）
+        assert page.save() is True
+        saved_path = os.path.join(td, "测试品种.yaml")
+        assert os.path.exists(saved_path)
+        assert library.load(saved_path).field_mapping[0].verify_after_fill is False
+
+        # 新建模式：清空
+        page.load_product(None)
+        assert page.table.rowCount() == 0 and page.name_edit.text() == ""
+
+
 def main() -> int:
     test_business_page_offers_two_actions()
     print("  · 业务页两张操作卡 ✓")
@@ -117,6 +172,8 @@ def main() -> int:
     print("  · 导航：保险 → 批量录入 → 返回 ✓")
     test_batch_page_has_product_selector()
     print("  · 批量页品种选择器（默认取配方、运行用所选）✓")
+    test_product_page_edit_roundtrip()
+    print("  · 品种编辑页：载入 → 改 → 保存 ✓")
     test_load_record_from_file_maps_columns_to_properties()
     print("  · 载入数据：列名字典 → 品种属性名 ✓")
     print("test_gui_nav.py 全部通过 ✓")

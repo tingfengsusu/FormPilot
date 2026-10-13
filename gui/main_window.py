@@ -78,6 +78,8 @@ class MainWindow(QMainWindow):
         # 业务页与批量页都**首次打开时才构造**（避免启动阶段就去碰数据库）
         self.business_page = None
         self.batch_page = None
+        # 品种编辑页（取代原来的 5 步向导；创建与编辑共用）
+        self.product_page = None
         self.setCentralWidget(self.stack)
 
     def _show_main_page(self):
@@ -85,6 +87,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(0)
         self.prop_mgmt_action.setText("🏷️ 属性管理")
         self.business_action.setText("🏢 保险")
+        self.new_action.setText("+ 新建品种")
 
         product = self.page_panel._product
         if product is not None:
@@ -102,6 +105,7 @@ class MainWindow(QMainWindow):
         self.property_panel.source_extracted.connect(self._on_source_extracted)
         self.new_action.triggered.connect(self._on_new_product)
         self.product_list.new_btn.clicked.connect(self._on_new_product)
+        self.product_list.edit_requested.connect(self._on_edit_product)
         self.prop_mgmt_action.triggered.connect(self._on_manage_properties)
         self.business_action.triggered.connect(self._on_open_business)
         self.load_action.triggered.connect(self._on_load_data)
@@ -171,18 +175,44 @@ class MainWindow(QMainWindow):
         return values
 
     def _on_new_product(self):
-        """打开品种创建向导，完成后保存并刷新列表。"""
-        from .product_wizard import ProductWizard
+        """打开品种编辑页（新建）。"""
+        self._open_product_page(None)
 
-        wizard = ProductWizard(self, prop_def_library=self.prop_def_library)
-        if wizard.exec_() == ProductWizard.Accepted:
-            try:
-                product = wizard.collect_product()
-                path = wizard.library.save(product)
-                self.product_list.refresh()
-                self.statusBar().showMessage(f"新品种已保存：{product.name}")
-            except Exception as e:
-                QMessageBox.critical(self, "保存失败", str(e))
+    def _on_edit_product(self, name: str):
+        """打开品种编辑页（编辑已有品种）。"""
+        for product in self.product_list.products.values():
+            if product.name == name:
+                self._open_product_page(product)
+                return
+        self.statusBar().showMessage(f"未找到品种：{name}")
+
+    def _open_product_page(self, product=None) -> None:
+        """品种编辑页：一屏编完（取代原来的 5 步向导；创建与编辑共用）。"""
+        if self.product_page is None:
+            from .product_page import ProductPage
+
+            self.product_page = ProductPage(prop_def_library=self.prop_def_library)
+            self.product_page.saved.connect(self._on_product_saved)
+            self.product_page.back_requested.connect(self._show_main_page)
+            self.stack.addWidget(self.product_page)
+        self.product_page.load_product(product)
+        self.stack.setCurrentWidget(self.product_page)
+        self.new_action.setText("⬅ 返回主界面")
+        self.statusBar().showMessage(
+            f"品种编辑：{product.name}" if product is not None else "品种编辑：新建")
+
+    def _on_product_saved(self, name: str) -> None:
+        """保存成功：刷新左侧列表并选中它（主界面面板跟着加载）。"""
+        self.product_list.refresh()
+        if not name:
+            self.statusBar().showMessage("品种已删除")
+            return
+        for i in range(self.product_list.list_widget.count()):
+            item = self.product_list.list_widget.item(i)
+            if item.data(Qt.UserRole) == name:
+                self.product_list.list_widget.setCurrentRow(i)
+                break
+        self.statusBar().showMessage(f"品种已保存：{name}")
 
     def _on_manage_properties(self):
         """切换到属性管理内部页面；再次点击返回主界面。"""
