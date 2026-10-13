@@ -32,7 +32,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         self.new_action = toolbar.addAction("+ 新建品种")
-        self.business_action = toolbar.addAction("🏢 保险")
+        self.business_action = toolbar.addAction("🏢 保险业务")
         self.business_action.setToolTip("保险业务：批量录入 / 台账复核 / 单条录入")
         self.load_action = toolbar.addAction("📂 载入数据")
         self.load_action.setToolTip("从 Excel / CSV 取第一条记录，"
@@ -94,7 +94,7 @@ class MainWindow(QMainWindow):
             return
         self.stack.setCurrentIndex(0)
         self.prop_mgmt_action.setText("🏷️ 属性管理")
-        self.business_action.setText("🏢 保险")
+        self.business_action.setText("🏢 保险业务")
         self.new_action.setText("+ 新建品种")
 
         product = self.page_panel._product

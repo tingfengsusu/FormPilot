@@ -13,14 +13,22 @@ from __future__ import annotations
 
 import os
 import sys
+from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from _helpers import browser_available, skip_test
 
 from core.product import Product
 from core.property_pool import PropertyPool
 from engine import (FieldKind, FillEngine, FillEvent, SubmitSpec,
                     missing_mappings)
 from engine.session import problems_of, safe_filename
+
+
+def _data_page(body: str) -> str:
+    """把一小段 HTML 变成 data: URL（中文要百分号编码，否则浏览器可能不认）。"""
+    return "data:text/html;charset=utf-8," + quote(f"<html><body>{body}</body></html>")
 
 
 def _product(**kwargs) -> Product:
@@ -125,6 +133,66 @@ def test_safe_filename_strips_illegal_chars():
     assert safe_filename("") == "record"
 
 
+# ----------------------------------------------------------------------
+# 页面拦截（验证码 / 滑块 / 登录墙）—— 真浏览器，页面是 data: URL
+# ----------------------------------------------------------------------
+def _blocker_product(html: str) -> Product:
+    return Product.from_dict({
+        "name": "拦截页测试", "target_url": html, "verify_delay_ms": 10,
+        "field_mapping": [{"property": "姓名", "locator": 'input[name="xm"]'}],
+    })
+
+
+def test_captcha_page_stops_and_needs_human():
+    """页面有验证码/滑块 → 不填、不重试、不提交，直接转人工。"""
+    if not browser_available():
+        skip_test("浏览器不可用（未装 Playwright 或内核未下载）")
+        return
+
+    html = _data_page('<input name="xm"><div>请拖动滑块完成验证</div>')
+    pool = PropertyPool()
+    pool.feed_dict({"姓名": "张三"})
+
+    events = []
+    engine = FillEngine(_blocker_product(html), headless=True,
+                        on_event=lambda event, data: events.append(event))
+    result = engine.fill_one(pool, max_attempts=3, backoff_seconds=0)
+
+    assert not result.ok
+    assert result.needs_human                      # 转人工，且原因可读
+    assert result.attempts == 1                    # 验证码不重试（重试也过不去）
+    assert result.filled_fields == 0               # 一个字都没往里填
+    assert FillEvent.BLOCKED in events
+
+
+def test_captcha_image_is_detected():
+    """验证码图片（src 命中 captcha）同样算拦截。"""
+    if not browser_available():
+        skip_test("浏览器不可用（未装 Playwright 或内核未下载）")
+        return
+
+    html = _data_page('<input name="xm"><img src="/captcha.jpg">')
+    pool = PropertyPool()
+    pool.feed_dict({"姓名": "张三"})
+    result = FillEngine(_blocker_product(html), headless=True).fill_one(pool)
+
+    assert not result.ok and "验证码" in result.needs_human
+
+
+def test_plain_word_does_not_block():
+    """正文里只是提到"验证码"（如 12306）不该误拦 —— 不确定就不拦。"""
+    if not browser_available():
+        skip_test("浏览器不可用（未装 Playwright 或内核未下载）")
+        return
+
+    html = _data_page('<input name="xm"><div>登录后可查看验证码说明</div>')
+    pool = PropertyPool()
+    pool.feed_dict({"姓名": "张三"})
+    result = FillEngine(_blocker_product(html), headless=True).fill_one(pool)
+
+    assert result.ok and not result.needs_human
+
+
 if __name__ == "__main__":
     test_mock_session_fills_one_record()
     test_required_missing_reports_problem()
@@ -136,4 +204,7 @@ if __name__ == "__main__":
     test_field_kind_maps_fill_mode()
     test_problems_of_truncates_long_messages()
     test_safe_filename_strips_illegal_chars()
+    test_captcha_page_stops_and_needs_human()
+    test_captcha_image_is_detected()
+    test_plain_word_does_not_block()
     print("test_engine_session.py 全部通过 ✓")

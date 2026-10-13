@@ -60,6 +60,7 @@ class FillEvent(str, Enum):
     FORM_OPENED = "form_opened"
     FIELD_VERIFIED = "field_verified"
     DIFF_FOUND = "diff_found"
+    BLOCKED = "blocked"              # 验证码/滑块/登录墙 → 转人工
     RECORD_FINISHED = "record_finished"
     SUBMITTED = "submitted"
 

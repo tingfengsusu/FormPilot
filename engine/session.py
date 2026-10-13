@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from .blockers import detect_blocker
 from .models import BAD_STATUSES, FillEvent, FillResult, OpenSpec
 
 #: 单条问题的截断长度：点击超时日志很长，不截断会把后面的问题挤掉（实测只看到第一条）
@@ -138,13 +139,20 @@ class FillSession:
 
         for attempt in range(1, max(1, int(max_attempts)) + 1):
             result.attempts = attempt
+            blocker = ""
             try:
-                report = self._fill_once(pool, submit=submit)
+                report, blocker = self._fill_once(pool, submit=submit)
                 problems = problems_of(report)
             except Exception as e:  # noqa: BLE001 — 单条失败不影响同批其他条
                 report, problems = [], [f"填表异常：{e}"]
                 result.error = str(e)
             result.report = report
+            if blocker:
+                # 验证码/登录墙：重试只会再遇到同一个，直接转人工（不填、不提交）
+                result.needs_human = blocker
+                result.problems = []
+                self._emit(FillEvent.BLOCKED, label=label, reason=blocker)
+                break
             self._emit(FillEvent.FIELD_VERIFIED, label=label, attempt=attempt,
                        filled=sum(1 for e in report if e.get("status") == "filled"),
                        problems=len(problems))
@@ -201,8 +209,12 @@ class FillSession:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
-    def _fill_once(self, pool: Any, *, submit: bool) -> List[Dict[str, Any]]:
-        """填一次表单（Mock / 无页面 → 模拟填写路径）。"""
+    def _fill_once(self, pool: Any, *, submit: bool) -> Tuple[List[Dict[str, Any]], str]:
+        """填一次表单（Mock / 无页面 → 模拟填写路径）。
+
+        :return: (填充报告, 需人工的原因) —— 页面被验证码/登录墙拦住时报告为空、
+            原因非空，调用方据此转人工（不填、不提交）。
+        """
         if self.filler_factory is not None:
             filler = self.filler_factory(self.product, pool)
         else:
@@ -211,18 +223,20 @@ class FillSession:
             filler = FormFiller(self.product, pool, browser_hold_seconds=0)
 
         if self.mock or self._page is None:
-            # 显式要求模拟填写：fill() 会按环境自动选真实/模拟，装了 Playwright
-            # 时会真开浏览器 —— 引擎的 Mock 会话必须确定性（规格 §四.2）
             fill_mock = getattr(filler, "fill_mock", None)
-            return fill_mock() if callable(fill_mock) else filler.fill(headless=True)
+            return (fill_mock() if callable(fill_mock)
+                    else filler.fill(headless=True)), ""
 
         filler.open_form(self._page)
         self._emit(FillEvent.FORM_OPENED, url=self.open_spec.url)
+        blocker = detect_blocker(self._page)
+        if blocker:
+            return [], blocker
         report = filler.fill_on_page(self._page)
         # 保持既有行为：提交发生在回读评估之前（收紧时机需要业务侧确认）
         if submit:
             self.submit_now()
-        return report
+        return report, ""
 
     def _emit(self, event: FillEvent, **payload: Any) -> None:
         if self.on_event is None:

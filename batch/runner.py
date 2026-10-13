@@ -286,7 +286,13 @@ class BatchRunner:
             return result
 
         result.status = STATUS_FILL_FAILED
-        result.reason = "；".join(fill.problems)[:500]
+        if fill.needs_human:
+            # 验证码/滑块/登录墙：引擎已停下不填 —— 状态按录入失败记，但原因写清"需人工"
+            result.reason = fill.needs_human
+            note = f"需人工：{fill.needs_human}"
+        else:
+            result.reason = "；".join(fill.problems)[:500]
+            note = f"批量录入失败（重试 {fill.attempts} 次）"
         # 仅异常停（confirm_policy: exception_only）：失败了先问人 ——
         # 人认了这条仍进复核队列（谁放行谁负责），打回就按录入失败记
         if self.confirm_policy == "exception_only" and self.on_confirm is not None \
@@ -299,8 +305,7 @@ class BatchRunner:
                                note="异常经人工确认后放行")
             return result
         self.db.set_status(applicant.id, STATUS_FILL_FAILED, operator="system",
-                           note=f"批量录入失败（重试 {fill.attempts} 次）",
-                           fail_reason=result.reason)
+                           note=note, fail_reason=result.reason)
         return result
 
     # ------------------------------------------------------------------

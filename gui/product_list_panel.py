@@ -30,7 +30,10 @@ class ProductListPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("📋 保险品种"))
+        title = QLabel("🧩 品种库")
+        title.setToolTip("录入用的页面配置：目标 URL、要填哪些字段、怎么填\n"
+                         "（双击可编辑；新增走主窗口的「+ 新建品种」）")
+        layout.addWidget(title)
 
         self.list_widget = QListWidget()
         self.list_widget.setToolTip("双击品种可直接编辑")
