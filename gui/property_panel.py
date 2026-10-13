@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea)
 from core.product import Product
 from .widgets.source_group import SourceGroup
 from sources.factory import create_source
+from .theme import mark
 
 
 class PropertyPanel(QWidget):
@@ -38,7 +39,7 @@ class PropertyPanel(QWidget):
     def _show_empty(self) -> None:
         self._clear_groups()
         hint = QLabel("请先在左侧选择一个品种")
-        hint.setStyleSheet("color: gray;")
+        mark(hint, "hint")
         self.container_layout.addWidget(hint)
         self.container_layout.addStretch()
 
@@ -61,7 +62,7 @@ class PropertyPanel(QWidget):
 
         if not source_fields:
             hint = QLabel("该品种暂无可用属性")
-            hint.setStyleSheet("color: gray;")
+            mark(hint, "hint")
             self.container_layout.addWidget(hint)
             self.container_layout.addStretch()
             return

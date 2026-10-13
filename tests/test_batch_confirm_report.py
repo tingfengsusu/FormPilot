@@ -217,6 +217,51 @@ def test_confirm_callback_exception_treated_as_reject():
             assert db.get_applicant(applicant.id).status == STATUS_FILL_FAILED
 
 
+def test_exception_only_asks_only_on_failure_and_can_pass_through():
+    """仅异常停：正常条不问；失败条问一次，人认了 → 仍进复核队列。"""
+    with tempfile.TemporaryDirectory() as td:
+        with _db(td) as db:
+            batch = db.create_batch("仅异常停")
+            ok_applicant = _applicant(batch_id=batch.id)
+            ok_applicant.id = db.add_applicant(ok_applicant)
+            bad_applicant = _applicant(batch_id=batch.id, name="学生乙",
+                                       payer_name="")          # 必填缺失 → 失败
+            bad_applicant.id = db.add_applicant(bad_applicant)
+            for aid in (ok_applicant.id, bad_applicant.id):
+                db.set_status(aid, STATUS_CONFIRMED, operator="人工")
+
+            asked = []
+
+            def confirmer(applicant, fill, session):
+                asked.append((applicant.id, fill.ok))
+                return True                                  # 人认了
+
+            runner = BatchRunner(db, recipe=_recipe("exception_only"),
+                                 screenshot_dir=td, on_confirm=confirmer)
+            report = runner.run(batch.id)
+
+            assert asked == [(bad_applicant.id, False)]      # 只问失败那条
+            assert report.failed == 0 and report.to_review == 2
+            assert db.get_applicant(bad_applicant.id).status == STATUS_TO_REVIEW
+
+
+def test_exception_only_reject_keeps_failed():
+    with tempfile.TemporaryDirectory() as td:
+        with _db(td) as db:
+            batch = db.create_batch("仅异常停打回")
+            applicant = _applicant(batch_id=batch.id, payer_name="")
+            applicant.id = db.add_applicant(applicant)
+            db.set_status(applicant.id, STATUS_CONFIRMED, operator="人工")
+
+            runner = BatchRunner(db, recipe=_recipe("exception_only"),
+                                 screenshot_dir=td,
+                                 on_confirm=lambda a, f, s: False)
+            report = runner.run(batch.id)
+
+            assert report.failed == 1 and report.to_review == 0
+            assert db.get_applicant(applicant.id).status == STATUS_FILL_FAILED
+
+
 def test_batch_policy_does_not_ask_and_report_can_be_off():
     with tempfile.TemporaryDirectory() as td:
         with _db(td) as db:
@@ -240,5 +285,7 @@ if __name__ == "__main__":
     test_per_record_confirm_approve_marks_to_review_and_writes_report()
     test_per_record_confirm_reject_marks_failed()
     test_confirm_callback_exception_treated_as_reject()
+    test_exception_only_asks_only_on_failure_and_can_pass_through()
+    test_exception_only_reject_keeps_failed()
     test_batch_policy_does_not_ask_and_report_can_be_off()
     print("test_batch_confirm_report.py 全部通过 ✓")

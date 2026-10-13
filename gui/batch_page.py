@@ -31,6 +31,7 @@ from batch.models import (ALL_STATUSES, STATUS_COLORS, STATUS_DATA_ERROR,
                           STATUS_TO_REVIEW)
 from batch.recipe import Recipe
 from batch.reviewer import ReviewItem, Reviewer
+from .theme import mark
 
 _TABLE_COLUMNS = ("id", "姓名", "学校", "年级", "班级", "状态", "失败/异常原因")
 
@@ -125,6 +126,7 @@ class BatchPage(QWidget):
         layout.addWidget(self.import_btn)
 
         self.run_btn = QPushButton("🚀 批量录入（已确认）")
+        mark(self.run_btn, "primary")
         self.run_btn.clicked.connect(self.run_batch)
         layout.addWidget(self.run_btn)
         return box
@@ -187,6 +189,7 @@ class BatchPage(QWidget):
         self.approve_btn = QPushButton("✅ 通过 (Enter)")
         self.approve_btn.clicked.connect(self.approve_current)
         self.reject_btn = QPushButton("↩ 打回 (Backspace)")
+        mark(self.reject_btn, "danger")
         self.reject_btn.clicked.connect(self.reject_current)
         bulk_btn = QPushButton("⚡ 批量通过（无异常项）")
         bulk_btn.clicked.connect(self.bulk_approve)

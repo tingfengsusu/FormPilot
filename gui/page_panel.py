@@ -9,6 +9,7 @@ from core.property_pool import PropertyPool
 from core.product import Product
 from core.config import config
 from page.filler import FormFiller
+from .theme import mark
 
 
 class _FillWorker(QThread):
@@ -45,6 +46,7 @@ class PagePanel(QWidget):
         layout.addWidget(self.report_view, 1)
 
         self.fill_btn = QPushButton("🚀 开始录入")
+        mark(self.fill_btn, "primary")
         layout.addWidget(self.fill_btn)
 
         self._product: Product | None = None

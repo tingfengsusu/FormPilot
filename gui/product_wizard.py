@@ -18,6 +18,7 @@ from core.product_library import ProductLibrary
 from core.property_def import PropertyDefLibrary
 from page.scanner import Scanner
 from page.matcher import FieldMatcher
+from .theme import mark
 
 
 class ProductWizard(QWizard):
@@ -351,7 +352,7 @@ class _ConfirmPage(QWizardPage):
 
         if not properties:
             empty = QLabel("未选择属性，请返回第 2 步勾选")
-            empty.setStyleSheet("color: gray;")
+            mark(empty, "hint")
             self._grid_layout.addWidget(empty)
 
     def collect_mapping(self) -> List[dict]:

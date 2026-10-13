@@ -28,6 +28,7 @@ from core.property_def import (
     PropertyDef, PropertyDefLibrary, SOURCES, TYPE_LABELS, TYPE_SELECT,
     builtin_defs,
 )
+from .theme import mark
 
 _HEADERS = ["属性名", "归属来源", "类型", "选项", "默认值", "必填", "描述"]
 _COL_NAME, _COL_SOURCE, _COL_TYPE, _COL_OPTIONS, _COL_DEFAULT, _COL_REQUIRED, _COL_DESC = range(7)
@@ -56,7 +57,7 @@ class PropertyManagerWidget(QWidget):
         # ---- 工具条（按钮在表格上方）----
         toolbar = QHBoxLayout()
         self.title_label = QLabel("🏷️ 属性管理")
-        self.title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        mark(self.title_label, "title")
         toolbar.addWidget(self.title_label)
         toolbar.addSpacing(12)
 
@@ -70,6 +71,7 @@ class PropertyManagerWidget(QWidget):
         self.discard_btn = QPushButton("↶ 放弃更改")
         self.discard_btn.clicked.connect(self.discard_changes)
         self.save_btn = QPushButton("💾 保存")
+        mark(self.save_btn, "primary")
         self.save_btn.clicked.connect(self.save)
         toolbar.addWidget(self.add_btn)
         toolbar.addWidget(self.delete_btn)
@@ -96,14 +98,14 @@ class PropertyManagerWidget(QWidget):
 
         # ---- 状态区 ----
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: gray;")
+        mark(self.status_label, "hint")
         layout.addWidget(self.status_label)
 
         self._hint = QLabel(
             "提示：黄色底纹行 = 自定义或已覆盖内置的属性；内置属性行名不可改，"
             "「恢复默认」可撤销覆盖；「选项」列仅下拉选择类型可编辑。")
         self._hint.setWordWrap(True)
-        self._hint.setStyleSheet("color: #888; font-size: 11px;")
+        mark(self._hint, "hint")
         layout.addWidget(self._hint)
 
         self.refresh_table()

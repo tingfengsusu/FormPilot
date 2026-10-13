@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (QMainWindow, QSplitter, QToolBar, QStatusBar,
 from .product_list_panel import ProductListPanel
 from .property_panel import PropertyPanel
 from .page_panel import PagePanel
+from .theme import mark
 
 
 class MainWindow(QMainWindow):
@@ -41,6 +42,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.url_input)
 
         self.start_btn = QPushButton("🚀 开始录入")
+        mark(self.start_btn, "primary")
         toolbar.addWidget(self.start_btn)
 
     def _build_splitter(self):
