@@ -13,7 +13,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from _helpers import skip_test
+from _helpers import browser_available, skip_test
 
 from core.product import Product
 from core.property_pool import PropertyPool
@@ -38,17 +38,7 @@ def _product() -> Product:
 
 def _browser_available() -> bool:
     """探测浏览器内核能否启动（未下载 / 缺依赖 → 跳过而不是失败）。"""
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception:  # noqa: BLE001
-        return False
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            browser.close()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+    return browser_available()
 
 
 def test_engine_real_browser_fill_and_screenshot():

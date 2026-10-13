@@ -42,6 +42,24 @@ def use_temp_key(tmp_dir: str = "") -> str:
     return path
 
 
+def browser_available() -> bool:
+    """浏览器内核能否启动（未装 Playwright / 内核未下载 → False）。
+
+    用于「需要真浏览器」的用例：调用方据此 skip_test()，而不是失败。
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def make_id_card(region: str = "410305", birth: str = "20150901",
                  seq: str = "123", gender: str = "男") -> str:
     """生成一个**校验位正确**的虚构身份证号（测试样本，非真实数据）。

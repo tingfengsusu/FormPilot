@@ -87,6 +87,7 @@ class BatchRunner:
                  screenshot_dir: str = "", today: Optional[date] = None,
                  filler_factory: Optional[Any] = None,
                  submit: Optional[bool] = None,
+                 headless: Optional[bool] = None,
                  on_event: Optional[Callable[[Any, Dict[str, Any]], None]] = None):
         self.db = db
         self.recipe = recipe or Recipe.load()
@@ -97,6 +98,9 @@ class BatchRunner:
         self.on_event = on_event
         self.submit = bool(self.recipe.execute.get("submit", False)) \
             if submit is None else bool(submit)
+        # 配方里的 execute.headless 原来没被读（旧实现硬编码了 False），这里接上
+        self.headless = bool(self.recipe.execute.get("headless", False)) \
+            if headless is None else bool(headless)
 
     # ------------------------------------------------------------------
     # 对外入口
@@ -212,7 +216,7 @@ class BatchRunner:
     def _run_session(self, applicants: Sequence[Applicant], product: Any,
                      report: RunReport) -> None:
         """一条会话连续填多条；Mock 模式（或未装 Playwright）不开浏览器。"""
-        engine = FillEngine(product, headless=False, mock=self._use_mock(),
+        engine = FillEngine(product, headless=self.headless, mock=self._use_mock(),
                             filler_factory=self.filler_factory,
                             on_event=self.on_event)
         with engine.session() as session:
