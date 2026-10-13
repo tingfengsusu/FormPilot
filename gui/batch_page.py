@@ -118,17 +118,74 @@ class BatchPage(QWidget):
         layout.addWidget(self.status_label)
 
     def _build_header(self) -> QHBoxLayout:
-        """面包屑 + 返回：批量录入是「保险」业务下的一项操作，不是孤立页面。"""
+        """面包屑 + 品种选择：批量录入是「保险」业务下的一项操作，不是孤立页面。
+
+        「用哪张页面录」在这里选（默认取配方里的 product）——
+        以前这个值只在 config/recipes/*.yaml 里写死，和主界面选的品种是两套配置源。
+        """
         row = QHBoxLayout()
         back = QPushButton("‹ 返回保险")
         back.setToolTip("回到「保险业务」页（选择其它操作）")
         back.clicked.connect(self.back_requested.emit)
         row.addWidget(back)
-        crumb = QLabel("保险 › 批量录入（导入 → 录入 → 复核）")
+        crumb = QLabel("保险 › 批量录入")
         mark(crumb, "title")
         row.addWidget(crumb)
+
+        row.addSpacing(12)
+        row.addWidget(QLabel("品种："))
+        self.product_combo = QComboBox()
+        self.product_combo.setMinimumWidth(220)
+        self.product_combo.setToolTip("要录入的目标页面配置（config/product_library/*.yaml）")
+        self.product_combo.addItems(self._product_names())
+        default_product = str(self.recipe.execute.get("product", "") or "")
+        if default_product and self.product_combo.findText(default_product) < 0:
+            self.product_combo.addItem(default_product)
+        if default_product:
+            self.product_combo.setCurrentText(default_product)
+        self.product_combo.currentTextChanged.connect(self._update_product_hint)
+        row.addWidget(self.product_combo)
+
+        self.product_hint = QLabel("")
+        mark(self.product_hint, "hint")
+        row.addWidget(self.product_hint)
+        self._update_product_hint(self.product_combo.currentText())
+
         row.addStretch()
         return row
+
+    def _product_names(self) -> List[str]:
+        """品种库里可选的品种名。"""
+        try:
+            from core.product_library import ProductLibrary
+
+            return [p.name for p in ProductLibrary().list_products()]
+        except Exception:  # noqa: BLE001 — 读不到库不该让页面打不开
+            return []
+
+    def _update_product_hint(self, name: str) -> None:
+        """显示这个品种会打开哪个页面（选错品种 = 填错系统，必须看得见）。"""
+        url = ""
+        try:
+            from core.product_library import ProductLibrary
+
+            for product in ProductLibrary().list_products():
+                if product.name == name:
+                    url = product.target_url
+                    break
+        except Exception:  # noqa: BLE001
+            url = ""
+        self.product_hint.setText(f"→ {url}" if url else "")
+
+    def _runner_recipe(self) -> Recipe:
+        """按界面上的选择生成本次运行的配方（只在副本上改，不动全局配置）。"""
+        import copy
+
+        recipe = copy.deepcopy(self.recipe)
+        chosen = self.product_combo.currentText().strip()
+        if chosen:
+            recipe.execute["product"] = chosen
+        return recipe
 
     def _build_batches(self) -> QWidget:
         box = QGroupBox("批次")
@@ -412,13 +469,13 @@ class BatchPage(QWidget):
             return
         if QMessageBox.question(
                 self, "批量录入",
-                "将逐条打开投保页填写（**不会自动提交**），期间请勿操作浏览器。\n"
-                "继续吗？") != QMessageBox.Yes:
+                f"将用「{self.product_combo.currentText()}」逐条打开页面填写"
+                "（**不会自动提交**），期间请勿操作浏览器。\n继续吗？") != QMessageBox.Yes:
             return
 
         from batch.runner import BatchRunner
 
-        runner = BatchRunner(self.db, recipe=self.recipe)
+        runner = BatchRunner(self.db, recipe=self._runner_recipe())
         worker = _RunWorker(runner, batch_id, parent=self)
 
         # 逐条确认：配方里 confirm_policy: per_record 时，每填完一条弹窗问通过/打回

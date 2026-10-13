@@ -77,11 +77,46 @@ def test_load_record_from_file_maps_columns_to_properties():
     assert "保险期间起" not in values
 
 
+def test_batch_page_has_product_selector():
+    """批量页要能看见/选择「用哪张页面录」——以前这个值只在配方 yaml 里写死。"""
+    from _helpers import use_temp_key
+
+    from batch.db import BatchDB
+    from batch.recipe import Recipe
+    from gui.batch_page import BatchPage
+
+    with tempfile.TemporaryDirectory() as td:
+        use_temp_key(td)
+        db = BatchDB(os.path.join(td, "t.db"))
+        try:
+            recipe = Recipe.load()
+            page = BatchPage(db=db, recipe=recipe)
+
+            # 选择器里至少包含配方默认品种，且默认选中它
+            default_product = recipe.execute.get("product", "")
+            assert default_product, "配方里应有默认 product"
+            names = [page.product_combo.itemText(i)
+                     for i in range(page.product_combo.count())]
+            assert default_product in names, names
+            assert page.product_combo.currentText() == default_product
+            # 提示里给出目标 URL（选错品种 = 填错系统）
+            hint = page.product_hint.text()
+            assert hint == "" or hint.startswith("→ http"), hint
+            # 运行用的是界面上选的品种（副本，不动原配方）
+            page.product_combo.setCurrentText(default_product)
+            assert page._runner_recipe().execute["product"] == default_product
+            assert recipe.execute["product"] == default_product
+        finally:
+            db.close()          # 不关连接的话临时目录删不掉（Windows 会占用）
+
+
 def main() -> int:
     test_business_page_offers_two_actions()
     print("  · 业务页两张操作卡 ✓")
     test_nav_is_business_then_batch()
     print("  · 导航：保险 → 批量录入 → 返回 ✓")
+    test_batch_page_has_product_selector()
+    print("  · 批量页品种选择器（默认取配方、运行用所选）✓")
     test_load_record_from_file_maps_columns_to_properties()
     print("  · 载入数据：列名字典 → 品种属性名 ✓")
     print("test_gui_nav.py 全部通过 ✓")
