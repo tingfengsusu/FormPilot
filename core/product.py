@@ -29,6 +29,12 @@ class FieldMapping:
     #   verify_only  **只回读校验、不填写**（页面自动算出来的字段，
     #                如实测的「保险期间止」= 起期 + 364 天，且点不开）
     fill_mode: str = "plain"
+    # 复核呈现档位（"人工呈现"这一档；机器回读由 verify_after_fill 单独控制）：
+    #   human    进人工复核呈现（批注层贴期望值 / 报告里列出来）—— 默认
+    #   machine  不进人工呈现（纯直填的常规字段，少些噪音）；
+    #            一旦回读出问题，批注与报告仍会把它挑出来
+    #   spot     降级为抽查（呈现沿用 human，抽查统计留给后续实现）
+    verify_tier: str = "human"
 
     @classmethod
     def from_dict(cls, data: dict) -> "FieldMapping":
@@ -39,6 +45,7 @@ class FieldMapping:
             verify_after_fill=data.get("verify_after_fill", True),
             rule=data.get("rule"),
             fill_mode=data.get("fill_mode", "plain") or "plain",
+            verify_tier=data.get("verify_tier", "human") or "human",
         )
 
 
@@ -90,6 +97,8 @@ class Product:
                     "verify_after_fill": m.verify_after_fill,
                     **({"rule": m.rule} if m.rule else {}),
                     **({"fill_mode": m.fill_mode} if m.fill_mode != "plain" else {}),
+                    **({"verify_tier": m.verify_tier}
+                       if m.verify_tier != "human" else {}),
                 }
                 for m in self.field_mapping
             ],

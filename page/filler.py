@@ -224,11 +224,15 @@ class FormFiller:
         issue_map = {i["property"]: i for i in issues}
         for r in report:
             if r["property"] in issue_map:
-                mismatch = (f"回读不一致: 期望 {issue_map[r['property']]['expected']} "
-                            f"实际 {issue_map[r['property']]['actual']}")
+                issue = issue_map[r["property"]]
+                mismatch = (f"回读不一致: 期望 {issue['expected']} "
+                            f"实际 {issue['actual']}")
                 previous = str(r.get("message") or "")
                 r["status"] = "mismatch"
                 r["message"] = f"{previous}；{mismatch}" if previous else mismatch
+                # 结构化留档：报告/批注不再需要从 message 里解析期望与实际
+                r["expected"] = str(issue["expected"])
+                r["actual"] = str(issue["actual"])
 
         self._last_report = report
         self._last_issues = issues

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .models import BAD_STATUSES, FillEvent, FillResult, OpenSpec
 
@@ -185,6 +185,18 @@ class FillSession:
     def capture(self, path: str) -> str:
         """截图落盘；失败返回空串（截图失败不改变填写结果）。"""
         return capture_page(self._page, path)
+
+    def annotate(self, pool: Any, issues: Optional[Sequence[dict]] = None) -> int:
+        """把「期望值」贴到当前页面上（复核用）；返回贴上的条数。
+
+        只在"人正看着这个页面"的场合用（单条录入 / 逐条确认）；
+        批量无人值守时不贴 —— 那条路径的复核靠截图与对比报告。
+        """
+        if self._page is None:
+            return 0
+        from .annotate import annotate_expected
+
+        return annotate_expected(self._page, self.product, pool, issues=issues)
 
     # ------------------------------------------------------------------
     # 内部

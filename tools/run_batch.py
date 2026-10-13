@@ -99,6 +99,23 @@ def _confirm_records(db: BatchDB, spec: str) -> int:
     return 1 if failed else 0
 
 
+def _interactive_confirmer():
+    """逐条确认（confirm_policy: per_record）：页面上已贴好批注，这里只问通过/打回。"""
+    def confirmer(applicant, fill, session) -> bool:
+        print(f"\n— 逐条确认：{applicant.name}"
+              f"（已填 {fill.filled_fields} 个字段；浏览器里标了期望值）")
+        for problem in fill.problems:
+            print(f"  ⚠ {problem}")
+        try:
+            answer = input("通过？[Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("  （未作答，按打回处理）")
+            return False
+        return answer in ("", "y", "yes", "是", "通过")
+
+    return confirmer
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="run_batch.py",
@@ -133,7 +150,13 @@ def main(argv=None) -> int:
 
         from batch.runner import BatchRunner
 
-        runner = BatchRunner(db, recipe=recipe)
+        # 逐条确认（配方里 confirm_policy: per_record）：--yes 表示全部按通过处理
+        policy = str(recipe.execute.get("confirm_policy", "batch") or "batch").lower()
+        confirmer = None
+        if policy == "per_record":
+            confirmer = (lambda *_: True) if args.yes else _interactive_confirmer()
+
+        runner = BatchRunner(db, recipe=recipe, on_confirm=confirmer)
         if not args.yes:
             print(f"即将录入批次 #{args.batch}"
                   + (f" 的前 {args.limit} 条" if args.limit else " 的全部「已确认」记录"))
@@ -146,6 +169,8 @@ def main(argv=None) -> int:
 
         report = runner.run(args.batch, limit=args.limit)
         print("\n" + report.summary)
+        if report.html_report:
+            print(f"\n📄 对比报告（期望/实际/状态 + 截图）：{report.html_report}")
         return 0 if report.failed == 0 else 1
     finally:
         db.close()

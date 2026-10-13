@@ -63,6 +63,8 @@ class RunReport:
     reset_stuck: int = 0
     records: List[RecordResult] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    #: 归档对比报告（HTML）路径；未生成时为空
+    html_report: str = ""
 
     @property
     def summary(self) -> str:
@@ -88,7 +90,8 @@ class BatchRunner:
                  filler_factory: Optional[Any] = None,
                  submit: Optional[bool] = None,
                  headless: Optional[bool] = None,
-                 on_event: Optional[Callable[[Any, Dict[str, Any]], None]] = None):
+                 on_event: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
+                 on_confirm: Optional[Callable[..., bool]] = None):
         self.db = db
         self.recipe = recipe or Recipe.load()
         self.screenshot_dir = screenshot_dir or self.recipe.storage_path(
@@ -96,11 +99,17 @@ class BatchRunner:
         self.today = today
         self.filler_factory = filler_factory
         self.on_event = on_event
+        self.on_confirm = on_confirm
         self.submit = bool(self.recipe.execute.get("submit", False)) \
             if submit is None else bool(submit)
         # 配方里的 execute.headless 原来没被读（旧实现硬编码了 False），这里接上
         self.headless = bool(self.recipe.execute.get("headless", False)) \
             if headless is None else bool(headless)
+        #: 人工确认时机（见 batch/recipe.DEFAULT_EXECUTE）
+        self.confirm_policy = str(
+            self.recipe.execute.get("confirm_policy", "batch") or "batch").lower()
+        #: 本批的引擎结果（生成对比报告用）
+        self._results: List[tuple] = []
 
     # ------------------------------------------------------------------
     # 对外入口
@@ -137,6 +146,7 @@ class BatchRunner:
             return report
 
         self._run_session(applicants, product, report)
+        report.html_report = self._write_html_report(report, product)
         return report
 
     def _missing_mappings(self, product: Any) -> List[str]:
@@ -219,6 +229,7 @@ class BatchRunner:
         engine = FillEngine(product, headless=self.headless, mock=self._use_mock(),
                             filler_factory=self.filler_factory,
                             on_event=self.on_event)
+        self._results = []
         with engine.session() as session:
             for applicant in applicants:
                 self.db.set_status(applicant.id, STATUS_FILLING,
@@ -242,8 +253,9 @@ class BatchRunner:
                                   period_end=period_end)
             applicant.period_start, applicant.period_end = period_start, period_end
 
+        pool = self.build_pool(applicant)
         fill = session.fill(
-            self.build_pool(applicant),
+            pool,
             submit=self.submit,
             screenshot_path=self.screenshot_path(applicant),
             max_attempts=max(1, int(self.recipe.max_retries) + 1),
@@ -251,8 +263,20 @@ class BatchRunner:
             label=applicant.name,
         )
         result.attempts = fill.attempts
+        self._results.append((applicant.name, fill))
 
         if fill.ok:
+            # 逐条确认（confirm_policy: per_record）：填错删不掉的业务用这个
+            if self.confirm_policy == "per_record" and self.on_confirm is not None:
+                if not self._confirm_record(applicant, session, pool, fill):
+                    result.screenshot = fill.screenshot
+                    result.status = STATUS_FILL_FAILED
+                    result.reason = "人工复核打回"
+                    self.db.update_fields(applicant.id, screenshot=fill.screenshot)
+                    self.db.set_status(applicant.id, STATUS_FILL_FAILED,
+                                       operator="人工", note="逐条复核打回",
+                                       fail_reason=result.reason)
+                    return result
             result.screenshot = fill.screenshot
             result.status = STATUS_TO_REVIEW
             note = "批量录入完成" + (f"（{period_note}）" if period_note else "")
@@ -267,6 +291,45 @@ class BatchRunner:
                            note=f"批量录入失败（重试 {fill.attempts} 次）",
                            fail_reason=result.reason)
         return result
+
+    # ------------------------------------------------------------------
+    # 逐条确认 / 归档报告
+    # ------------------------------------------------------------------
+    def _confirm_record(self, applicant: Applicant, session: Any, pool: Any,
+                        fill: Any) -> bool:
+        """逐条确认：先在页面上贴批注（期望值），再把决定交给调用方。
+
+        调用方（GUI 弹窗 / CLI 交互）返回 True = 通过，False = 打回。
+        回调异常一律按**打回**处理 —— 宁可人工再看一次，也不放行。
+        """
+        try:
+            session.annotate(pool, issues=fill.diffs)
+        except Exception:  # noqa: BLE001 — 批注失败不阻断确认流程
+            pass
+        try:
+            return bool(self.on_confirm(applicant, fill, session))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _write_html_report(self, report: RunReport, product: Any = None) -> str:
+        """归档对比报告（证据层）；可用 ``execute.report_html: false`` 关掉。"""
+        if not self.recipe.execute.get("report_html", True) or not self._results:
+            return ""
+        from engine.report_html import (default_report_path, records_from_results,
+                                       render_report, write_report)
+
+        directory = os.path.join(self.screenshot_dir,
+                                 str(report.batch_id) if report.batch_id else "all")
+        path = default_report_path(directory, label="批次")
+        html_text = render_report(
+            f"批次录入报告（id={report.batch_id}）",
+            records_from_results(self._results, product=product),
+            meta={"待复核": report.to_review, "录入失败": report.failed,
+                  "截图目录": self.screenshot_dir})
+        try:
+            return write_report(path, html_text)
+        except Exception:  # noqa: BLE001 — 报告写不出不该影响录入结果
+            return ""
 
     # ------------------------------------------------------------------
     # 截图

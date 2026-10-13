@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from typing import List, Optional
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -39,11 +40,15 @@ class _RunWorker(QThread):
 
     finished_report = pyqtSignal(object)
     failed = pyqtSignal(str)
+    #: 逐条确认：工作线程请求主线程弹窗（(applicant, fill) → 人作答）
+    confirm_requested = pyqtSignal(object, object)
 
     def __init__(self, runner, batch_id: Optional[int], parent=None):
         super().__init__(parent)
         self._runner = runner
         self._batch_id = batch_id
+        self._answer: Optional[bool] = None
+        self._answered = threading.Event()
 
     def run(self):
         try:
@@ -51,6 +56,27 @@ class _RunWorker(QThread):
             self.finished_report.emit(report)
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
+
+    # -- 逐条确认（confirm_policy: per_record）--------------------------
+    def make_confirmer(self):
+        """给 BatchRunner 的 on_confirm：发信号回主线程弹窗，然后**等工作线程这边的答复**。
+
+        GUI 控件只能在主线程动，所以这里不直接弹窗：
+        发信号（Qt 会自动排队到主线程）→ 阻塞等待 → 主线程点了按钮再放行。
+        """
+        def confirmer(applicant, fill, session) -> bool:
+            self._answer = None
+            self._answered.clear()
+            self.confirm_requested.emit(applicant, fill)
+            self._answered.wait(timeout=600)     # 兜底：等不到答复按打回处理
+            return bool(self._answer)
+
+        return confirmer
+
+    def answer(self, ok: bool) -> None:
+        """主线程调用：把人的决定交回工作线程。"""
+        self._answer = bool(ok)
+        self._answered.set()
 
 
 class BatchPage(QWidget):
@@ -374,18 +400,40 @@ class BatchPage(QWidget):
         from batch.runner import BatchRunner
 
         runner = BatchRunner(self.db, recipe=self.recipe)
+        worker = _RunWorker(runner, batch_id, parent=self)
+
+        # 逐条确认：配方里 confirm_policy: per_record 时，每填完一条弹窗问通过/打回
+        policy = str(self.recipe.execute.get("confirm_policy", "batch") or "batch").lower()
+        if policy == "per_record":
+            runner.on_confirm = worker.make_confirmer()
+            worker.confirm_requested.connect(self._on_confirm_requested)
+
         self.run_btn.setEnabled(False)
         self.run_btn.setText("⏳ 录入中……")
-        self._worker = _RunWorker(runner, batch_id, parent=self)
+        self._worker = worker
         self._worker.finished_report.connect(self._on_run_finished)
         self._worker.failed.connect(self._on_run_failed)
         self._worker.start()
+
+    def _on_confirm_requested(self, applicant, fill) -> None:
+        """逐条确认弹窗（主线程）：页面上已贴好批注，这里给结论。"""
+        problems = "\n".join(fill.problems) or "（无异常）"
+        text = (f"{applicant.name}：已填 {fill.filled_fields} 个字段"
+                f"（浏览器里标注了期望值，不一致的是红框）。\n\n"
+                f"异常项：\n{problems}\n\n通过这条吗？")
+        answer = QMessageBox.question(self, "逐条确认", text,
+                                      QMessageBox.Yes | QMessageBox.No,
+                                      QMessageBox.Yes)
+        self._worker.answer(answer == QMessageBox.Yes)
 
     def _on_run_finished(self, report) -> None:
         self.run_btn.setEnabled(True)
         self.run_btn.setText("🚀 批量录入（已确认）")
         self.refresh_detail()
-        QMessageBox.information(self, "批量录入完成", report.summary)
+        text = report.summary
+        if getattr(report, "html_report", ""):
+            text += f"\n\n📄 对比报告（期望/实际/状态 + 截图）：\n{report.html_report}"
+        QMessageBox.information(self, "批量录入完成", text)
 
     def _on_run_failed(self, error: str) -> None:
         self.run_btn.setEnabled(True)

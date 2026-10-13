@@ -72,6 +72,26 @@ def test_build_annotations_without_issues_is_all_match():
     assert entries and all(e["kind"] == "ok" for e in entries)
 
 
+def test_build_annotations_skips_machine_tier_unless_problem():
+    """复核档位 machine 的字段不进人工呈现；但出问题了照样贴出来。"""
+    product = Product.from_dict({
+        "name": "档位测试",
+        "target_url": _MOCK_PAGE,
+        "field_mapping": [
+            {"property": "学生姓名", "locator": 'input[name="xm"]',
+             "verify_tier": "machine"},
+        ],
+    })
+    pool = PropertyPool()
+    pool.feed_dict({"学生姓名": "张三"})
+
+    assert build_annotations(product, pool) == []          # 无问题 → 不呈现
+
+    issues = [{"property": "学生姓名", "expected": "张三", "actual": "李四"}]
+    entries = build_annotations(product, pool, issues)
+    assert len(entries) == 1 and entries[0]["kind"] == "diff"
+
+
 def test_annotate_page_returns_zero_when_nothing_found():
     class _FakePage:
         def locator(self, _locator):

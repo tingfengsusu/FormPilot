@@ -104,6 +104,8 @@ def build_annotations(product: Any, pool: Any,
     """算出每个字段「期望值 / 是否一致」（纯逻辑，不碰浏览器）。
 
     口径与回读校验一致：属性池值为空 → 跳过（"未填写，不比对"）。
+    复核档位：``verify_tier == "machine"`` 的字段不进人工呈现 ——
+    但**一旦它被回读出问题，仍然会贴出来**（降级不等于放过错误）。
     """
     issue_map = {str(i.get("property")): i for i in (issues or [])}
     entries: List[Dict[str, Any]] = []
@@ -112,6 +114,9 @@ def build_annotations(product: Any, pool: Any,
         if expected is None or str(expected).strip() == "":
             continue
         problem = issue_map.get(mapping.property)
+        tier = str(getattr(mapping, "verify_tier", "human") or "human").lower()
+        if tier == "machine" and not problem:
+            continue
         if problem:
             actual = str(problem.get("actual") or "")
             entries.append({

@@ -36,6 +36,10 @@ DEFAULT_EXECUTE: Dict[str, Any] = {
     "interval_seconds": 2,
     "screenshot": True,
     "headless": False,
+    #: 人工确认时机：batch（批末统一复核）| per_record（逐条确认 —— 填错删不掉的场景用）
+    "confirm_policy": "batch",
+    #: 归档对比报告（HTML：期望/实际/状态 + 原始截图链接）
+    "report_html": True,
 }
 
 #: 复核段默认值。
