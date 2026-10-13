@@ -83,6 +83,9 @@ class _RunWorker(QThread):
 class BatchPage(QWidget):
     """批量投保：批次 / 明细 / 复核。"""
 
+    #: 请求返回「保险业务」页
+    back_requested = pyqtSignal()
+
     def __init__(self, db: Optional[BatchDB] = None,
                  recipe: Optional[Recipe] = None, parent=None):
         super().__init__(parent)
@@ -102,7 +105,7 @@ class BatchPage(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("📋 批量投保（导入 → 录入 → 复核）"))
+        layout.addLayout(self._build_header())
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self._build_batches())
@@ -113,6 +116,19 @@ class BatchPage(QWidget):
 
         self.status_label = QLabel("就绪")
         layout.addWidget(self.status_label)
+
+    def _build_header(self) -> QHBoxLayout:
+        """面包屑 + 返回：批量录入是「保险」业务下的一项操作，不是孤立页面。"""
+        row = QHBoxLayout()
+        back = QPushButton("‹ 返回保险")
+        back.setToolTip("回到「保险业务」页（选择其它操作）")
+        back.clicked.connect(self.back_requested.emit)
+        row.addWidget(back)
+        crumb = QLabel("保险 › 批量录入（导入 → 录入 → 复核）")
+        mark(crumb, "title")
+        row.addWidget(crumb)
+        row.addStretch()
+        return row
 
     def _build_batches(self) -> QWidget:
         box = QGroupBox("批次")

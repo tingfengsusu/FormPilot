@@ -126,7 +126,9 @@ class _AttrPage(QWizardPage):
         self._library = prop_def_library
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("勾选该品种需要填写的属性（属性库：内置 + 自定义）"))
+        layout.addWidget(QLabel("勾选该品种需要填写的属性（属性库：内置 + 自定义）\n"
+                                "提示：每个属性要不要「回读校验」，在下一步"
+                                "「确认字段映射」里逐行勾选"))
 
         self.list_widget = QListWidget()
         layout.addWidget(self.list_widget, 1)

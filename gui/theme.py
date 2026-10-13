@@ -123,6 +123,12 @@ QTabBar::tab:selected { color: {{ACCENT}}; background: {{SURFACE}};
                         border: 1px solid {{BORDER}}; border-bottom-color: {{SURFACE}};
                         font-weight: 600; }
 
+/* 向导（新建品种）：页面白底 + 标题规格化，避免看着还是系统默认灰 */
+QWizard { background: {{BG}}; }
+QWizardPage { background: {{SURFACE}}; }
+QLabel#qt_wizard_title { font-size: 16px; font-weight: 600; color: {{TEXT}}; }
+QLabel#qt_wizard_subtitle { color: {{MUTED}}; }
+
 /* 表格 */
 QTableWidget, QTableView {
     background: {{SURFACE}}; border: 1px solid {{BORDER}}; border-radius: 8px;
