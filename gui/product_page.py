@@ -154,14 +154,14 @@ class ProductPage(QWidget):
         box = QGroupBox("属性（这张页面要填什么）")
         layout = QVBoxLayout(box)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["属性", "locator", "必填", "回读校验", "填写策略", "转换"])
+            ["属性", "locator", "必填", "回读校验", "填写策略", "转换", "沿用"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        for col in (2, 3, 4, 5):
+        for col in (2, 3, 4, 5, 6):
             header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         layout.addWidget(self.table, 1)
 
@@ -180,7 +180,7 @@ class ProductPage(QWidget):
         del_btn.clicked.connect(self.delete_rows)
         row.addWidget(del_btn)
         row.addStretch()
-        hint = QLabel("回读校验 = 填完读回比对；转换 = 值格式规范化（如 日期 → YYYYMMDD）")
+        hint = QLabel("转换 = 值格式规范化（如 日期 → YYYYMMDD）；沿用 = 下次自动带出上次填成功的值")
         mark(hint, "hint")
         row.addWidget(hint)
         layout.addLayout(row)
@@ -249,7 +249,8 @@ class ProductPage(QWidget):
         for mapping in product.field_mapping:
             self._append_row(mapping.property, mapping.locator, mapping.required,
                              mapping.verify_after_fill, mapping.fill_mode,
-                             getattr(mapping, "transform", ""))
+                             getattr(mapping, "transform", ""),
+                             getattr(mapping, "sticky", False))
         self.status_label.setText(f"已载入：{product.name}")
         self._set_title(product.name)
         self._loaded_snapshot = self._snapshot()
@@ -269,6 +270,7 @@ class ProductPage(QWidget):
                 verify_after_fill=self._cell_checked(row, 3),
                 fill_mode=mode,
                 transform=self._row_transform(row),
+                sticky=self._cell_checked(row, 6),
             ))
         context = self._collect_context()
         return Product(
@@ -292,7 +294,8 @@ class ProductPage(QWidget):
             product.name, product.description, product.target_url,
             tuple(sorted((str(k), str(v)) for k, v in product.context.items())),
             tuple((m.property, m.locator, m.required, m.verify_after_fill,
-                   m.fill_mode) for m in product.field_mapping),
+                   m.fill_mode, m.transform, m.sticky)
+                  for m in product.field_mapping),
         )
 
     def has_unsaved_changes(self) -> bool:
@@ -479,16 +482,20 @@ class ProductPage(QWidget):
     # 表格辅助
     # ------------------------------------------------------------------
     def _append_row(self, prop: str, locator: str, required: bool,
-                    verify: bool, fill_mode: str, transform: str = "") -> int:
+                    verify: bool, fill_mode: str, transform: str = "",
+                    sticky: bool = False) -> int:
         row = self.table.rowCount()
         self.table.insertRow(row)
 
         self._set_cell_text(row, 0, prop)
         self._set_cell_text(row, 1, locator)
-        for col, checked in ((2, required), (3, verify)):
+        for col, checked in ((2, required), (3, verify), (6, sticky)):
             item = QTableWidgetItem()
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+            if col == 6:
+                item.setToolTip("下次选中这个品种时自动带出上次填成功的值\n"
+                                "（重复性表单：这次和上次只差一点）")
             self.table.setItem(row, col, item)
 
         combo = QComboBox()
@@ -560,17 +567,18 @@ class ProductPage(QWidget):
         # 用「快照 → 交换」实现整行搬移（含勾选状态与两个下拉）
         snapshot = [self._cell_text(row, 0), self._cell_text(row, 1),
                     self._cell_checked(row, 2), self._cell_checked(row, 3),
-                    self._row_mode(row), self._row_transform(row)]
+                    self._row_mode(row), self._row_transform(row),
+                    self._cell_checked(row, 6)]
         other = [self._cell_text(new_row, 0), self._cell_text(new_row, 1),
                  self._cell_checked(new_row, 2), self._cell_checked(new_row, 3),
-                 self._row_mode(new_row), self._row_transform(new_row)]
+                 self._row_mode(new_row), self._row_transform(new_row),
+                 self._cell_checked(new_row, 6)]
         for target, data in ((row, other), (new_row, snapshot)):
             self._set_cell_text(target, 0, data[0])
             self._set_cell_text(target, 1, data[1])
-            self.table.item(target, 2).setCheckState(
-                Qt.Checked if data[2] else Qt.Unchecked)
-            self.table.item(target, 3).setCheckState(
-                Qt.Checked if data[3] else Qt.Unchecked)
+            for col, checked in ((2, data[2]), (3, data[3]), (6, data[6])):
+                self.table.item(target, col).setCheckState(
+                    Qt.Checked if checked else Qt.Unchecked)
             for col, value in ((4, data[4]), (5, data[5])):
                 combo = self.table.cellWidget(target, col)
                 if isinstance(combo, QComboBox):

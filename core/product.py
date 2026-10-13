@@ -39,6 +39,9 @@ class FieldMapping:
     # date:YYYY-MM-DD / date:YYYYMMDD / date:YYYY/MM/DD / date:YYYY年MM月DD日
     # —— 数据里的日期写法常与页面要求不同（发票查验要 YYYYMMDD 就是实测例子）
     transform: str = ""
+    # 是否「沿用上次的值」：勾上后，下次选中这个品种时自动带出上次填成功的内容
+    # （重复性表单：这次和上次只差一点；值存在本地 data/sticky_values.json，不进配置）
+    sticky: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> "FieldMapping":
@@ -51,6 +54,7 @@ class FieldMapping:
             fill_mode=data.get("fill_mode", "plain") or "plain",
             verify_tier=data.get("verify_tier", "human") or "human",
             transform=str(data.get("transform", "") or ""),
+            sticky=bool(data.get("sticky", False)),
         )
 
 
@@ -105,6 +109,7 @@ class Product:
                     **({"verify_tier": m.verify_tier}
                        if m.verify_tier != "human" else {}),
                     **({"transform": m.transform} if m.transform else {}),
+                    **({"sticky": True} if m.sticky else {}),
                 }
                 for m in self.field_mapping
             ],

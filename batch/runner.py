@@ -285,6 +285,13 @@ class BatchRunner:
             self.db.update_fields(applicant.id, screenshot=fill.screenshot)
             self.db.set_status(applicant.id, STATUS_TO_REVIEW,
                                operator="system", note=note)
+            # 「沿用」字段：记下这次**填成功**的值（错值不沿用）
+            try:
+                from core.sticky_store import StickyStore
+
+                StickyStore().remember(product, pool)
+            except Exception:  # noqa: BLE001 — 记不住不该影响录入结果
+                pass
             return result
 
         result.status = STATUS_FILL_FAILED

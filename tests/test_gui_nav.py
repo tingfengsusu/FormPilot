@@ -28,12 +28,32 @@ from gui.theme import apply_theme
 apply_theme(_APP)
 
 
-def test_business_page_offers_two_actions():
+def test_business_page_lists_products_with_two_actions():
+    """业务页 = 品种清单，每个品种带自己的「单条 / 批量」两个操作。"""
     page = BusinessPage()
-    texts = [b.text() for b in page.findChildren(QPushButton)]
 
-    assert any("批量录入" in t for t in texts), texts
-    assert any("单条录入" in t for t in texts), texts
+    assert page._row_widgets, "应列出品种"
+    for name, single, batch in page._row_widgets:
+        assert name, "每行要有品种名"
+        assert "单条" in single.text()
+        assert "批量" in batch.text()
+
+
+def test_business_row_actions_preset_the_product():
+    """从某一行的「批量/单条」进去时，那个品种要被预选（不用再选一次）。"""
+    window = MainWindow()
+    window.business_action.trigger()
+    name, single, batch = window.business_page._row_widgets[0]
+
+    batch.click()                                  # 批量：进批量页并预选该品种
+    assert window.batch_page.product_combo.currentText() == name
+
+    window.batch_page.back_requested.emit()        # 回业务页
+    name, single, batch = window.business_page._row_widgets[0]
+    single.click()                                 # 单条：回主界面并选中该品种
+    assert window.stack.currentIndex() == 0
+    assert window.page_panel._product is not None
+    assert window.page_panel._product.name == name
 
 
 def test_nav_is_business_then_batch():
@@ -195,8 +215,10 @@ def test_product_page_warns_before_dropping_edits():
 
 
 def main() -> int:
-    test_business_page_offers_two_actions()
-    print("  · 业务页两张操作卡 ✓")
+    test_business_page_lists_products_with_two_actions()
+    print("  · 业务页：品种清单 + 每行的单条/批量 ✓")
+    test_business_row_actions_preset_the_product()
+    print("  · 从品种行进单条/批量会预选该品种 ✓")
     test_nav_is_business_then_batch()
     print("  · 导航：保险 → 批量录入 → 返回 ✓")
     test_batch_page_has_product_selector()

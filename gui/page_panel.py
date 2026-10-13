@@ -102,6 +102,15 @@ class PagePanel(QWidget):
         self.fill_btn.setEnabled(True)
         self.fill_btn.setText("🚀 开始录入")
 
+        # 「沿用」字段：单条录入成功后也记下值（与批量路径一致）
+        if not issues and self._product is not None:
+            try:
+                from core.sticky_store import StickyStore
+
+                StickyStore().remember(self._product, self._pool)
+            except Exception:  # noqa: BLE001 — 记不住不该影响填写结果展示
+                pass
+
         self.report_view.clear()
         self.report_view.append(f"品种：{self._product.name}")
         if config.mock_mode or not FormFiller._playwright_available():

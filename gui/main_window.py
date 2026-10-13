@@ -147,7 +147,20 @@ class MainWindow(QMainWindow):
         self.page_panel.set_product(product)
         if product.target_url:
             self.url_input.setText(product.target_url)
-        self.statusBar().showMessage(f"已选择品种：{product.name}")
+        note = f"已选择品种：{product.name}"
+        # 「沿用」字段：带出上次填成功的值（存本地 data/sticky_values.json，不进配置）
+        try:
+            from core.sticky_store import StickyStore
+
+            values = StickyStore().prefill(product)
+            if values:
+                for group in self.property_panel.source_groups.values():
+                    group.set_values(values)
+                self.page_panel.feed_input(values)
+                note += f"（已带出上次的 {len(values)} 个字段）"
+        except Exception:  # noqa: BLE001 — 带不出旧值不该影响选品种
+            pass
+        self.statusBar().showMessage(note)
 
     def _on_start_clicked(self):
         product = self.page_panel._product
@@ -250,18 +263,32 @@ class MainWindow(QMainWindow):
             from .business_page import BusinessPage
 
             self.business_page = BusinessPage()
-            self.business_page.open_batch.connect(self._open_batch_page)
-            self.business_page.open_single.connect(self._show_main_page)
+            self.business_page.single_requested.connect(self._open_single_in_workbench)
+            self.business_page.batch_requested.connect(self._open_batch_page)
             self.stack.addWidget(self.business_page)
         elif self.stack.currentWidget() is self.business_page:
             self._show_main_page()
             return
+        self.business_page.reload()
         self.stack.setCurrentWidget(self.business_page)
         self.business_action.setText("⬅ 返回主界面")
-        self.statusBar().showMessage("保险业务：选一项操作（批量录入 / 单条录入）")
+        self.statusBar().showMessage("保险业务：选一个品种，再选它的录入方式")
 
-    def _open_batch_page(self):
-        """进入保险业务下的批量录入页（首次打开才构造，避免启动就碰数据库）。"""
+    def _open_single_in_workbench(self, product_name: str) -> None:
+        """单条录入：回主界面并选中该品种（在那里填值、点开始录入）。"""
+        self._show_main_page()
+        items = self.product_list.list_widget
+        for i in range(items.count()):
+            if items.item(i).data(Qt.UserRole) == product_name:
+                items.setCurrentRow(i)
+                return
+        self.statusBar().showMessage(f"未找到品种：{product_name}")
+
+    def _open_batch_page(self, product_name: str = "") -> None:
+        """进入保险业务下的批量录入页（首次打开才构造，避免启动就碰数据库）。
+
+        :param product_name: 预选的品种（从业务页的某个品种点进来时带上）
+        """
         if self.batch_page is None:
             from .batch_page import BatchPage
 
@@ -269,6 +296,10 @@ class MainWindow(QMainWindow):
             self.batch_page.back_requested.connect(self._on_open_business)
             self.stack.addWidget(self.batch_page)
         self.batch_page.refresh_batches()
+        if product_name:
+            combo = self.batch_page.product_combo
+            if combo.findText(product_name) >= 0:
+                combo.setCurrentText(product_name)
         self.stack.setCurrentWidget(self.batch_page)
         self.business_action.setText("⬅ 返回主界面")
         self.statusBar().showMessage("保险 › 批量录入：导入台账 → 批量录入 → 逐条复核")
