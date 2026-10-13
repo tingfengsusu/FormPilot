@@ -225,6 +225,7 @@ class ProductPage(QWidget):
             self.referer_edit.clear()
             self.mobile_check.setChecked(False)
             self.wechat_check.setChecked(False)
+            self._set_title("")          # 别留着上一个品种的标题（自测截图抓到的 bug）
             self.status_label.setText("新建品种：填名称 → 加属性 → 扫描 locator")
             return
 
