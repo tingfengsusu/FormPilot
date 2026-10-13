@@ -374,7 +374,8 @@ class FormFiller:
             # 不等待，立即关闭（仅用于自动化测试）
             browser.close()
             return
-        print("✓ 自动填表完成，请在浏览器中核对后手动提交")
+        self._annotate(page)
+        print("✓ 自动填表完成：页面上已标注期望值（Ctrl+Shift+A 切换），核对后手动提交")
         try:
             page.wait_for_timeout(hold * 1000)
         except Exception:
@@ -384,6 +385,16 @@ class FormFiller:
                 browser.close()
             except Exception:
                 pass
+
+    def _annotate(self, page) -> None:
+        """把「期望值」贴到页面上（复核用；失败不影响填写结果）。"""
+        try:
+            from engine.annotate import annotate_expected
+
+            annotate_expected(page, self.product, self.pool,
+                              issues=self._last_issues)
+        except Exception:  # noqa: BLE001 — 批注只是锦上添花，绝不因此中断
+            pass
 
     # ------------------------------------------------------------------
     # Mock 填表（回退）

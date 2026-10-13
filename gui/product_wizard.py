@@ -300,25 +300,28 @@ class _ConfirmPage(QWizardPage):
         self.wizard = wizard
         self.setTitle("5️⃣ 确认字段映射")
         outer = QVBoxLayout(self)
-        outer.addWidget(QLabel("确认每个属性对应的页面字段（可手动修正 locator）"))
+        outer.addWidget(QLabel("确认每个属性对应的页面字段（可手动修正 locator）；"
+                               "右侧勾选框 = 该字段是否需要「回读校验」"))
 
         self._grid_layout = QVBoxLayout()
         self._grid_layout.setSpacing(6)
         outer.addLayout(self._grid_layout)
         outer.addStretch()
 
-        self._locator_edits: dict = {}  # property -> QLineEdit
+        self._locator_edits: dict = {}    # property -> QLineEdit
+        self._verify_checks: dict = {}    # property -> QCheckBox（是否回读校验）
         self._property_order: List[str] = []
         self._matched: dict = {}
 
     def set_mapping(self, properties: List[str], mapping_result: dict):
-        """填充确认行：每个属性一行「属性名 + locator 编辑框」。"""
+        """填充确认行：每个属性一行「属性名 + locator 编辑框 + 回读校验勾选」。"""
         # 清空旧行
         while self._grid_layout.count():
             item = self._grid_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self._locator_edits.clear()
+        self._verify_checks.clear()
         self._property_order = properties
         self._matched = mapping_result
 
@@ -335,6 +338,15 @@ class _ConfirmPage(QWizardPage):
             row.addWidget(edit, 1)
             self._locator_edits[prop] = edit
 
+            check = QCheckBox("回读校验")
+            check.setChecked(True)
+            check.setToolTip("填完读回页面值、与期望值比对（发现没填上/填错位）。\n"
+                             "识别、级联、日期这类易错字段建议保持勾选；\n"
+                             "纯直填的常规字段可取消，少一些复核噪音。\n"
+                             "注意：取消只影响校验与复核呈现，不影响填写。")
+            row.addWidget(check)
+            self._verify_checks[prop] = check
+
             self._grid_layout.addLayout(row)
 
         if not properties:
@@ -343,16 +355,17 @@ class _ConfirmPage(QWizardPage):
             self._grid_layout.addWidget(empty)
 
     def collect_mapping(self) -> List[dict]:
-        """收集用户最终确认的映射（读取编辑框中的 locator）。"""
+        """收集用户最终确认的映射（读取 locator 编辑框与「回读校验」勾选）。"""
         result = []
         for prop in self._property_order:
             edit = self._locator_edits.get(prop)
             locator = edit.text().strip() if edit else ""
+            check = self._verify_checks.get(prop)
             result.append({
                 "property": prop,
                 "locator": locator,
                 "required": bool(locator),   # 有 locator 才必填
-                "verify_after_fill": True,
+                "verify_after_fill": bool(check.isChecked()) if check else True,
             })
         return result
 

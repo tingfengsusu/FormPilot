@@ -115,6 +115,11 @@ class FillSession:
         self.close()
         return False
 
+    @property
+    def page(self) -> Any:
+        """当前页面对象（批注/复核等辅助能力需要）；未开浏览器时为 None。"""
+        return self._page
+
     # ------------------------------------------------------------------
     # 填一条（含重试；回读评估来自填充报告）
     # ------------------------------------------------------------------
@@ -164,9 +169,15 @@ class FillSession:
         return result
 
     def submit_now(self) -> None:
-        """点提交按钮 —— 仅在调用方显式要求时执行（默认不提交）。"""
+        """点提交按钮 —— 仅在调用方显式要求时执行（默认不提交）。
+
+        提交前**先清掉批注层**：批注是给人看的浮层，绝不能跟着表单提交出去。
+        """
         from page.overlay import click_with_guard
 
+        if self._page is not None:
+            from .annotate import clear_annotations
+            clear_annotations(self._page)
         click_with_guard(self._page, self.product.submit_button, timeout=5000)
         self._page.wait_for_timeout(1500)
         self._emit(FillEvent.SUBMITTED, url=self.open_spec.url)
