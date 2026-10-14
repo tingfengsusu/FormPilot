@@ -308,51 +308,91 @@ class MainWindow(QMainWindow):
     # 载入数据（Excel / CSV → 属性面板）
     # ------------------------------------------------------------------
     def _on_load_data(self) -> None:
-        """从表格取一条记录，按配方的列名字典映射后填进属性面板。"""
-        from PyQt5.QtWidgets import QFileDialog
+        """从表格取**一行**记录，按配方的列名字典映射后填进属性面板。
+
+        多于一行的表会让用户**选行**（并显示 Excel 真实行号）——原来固定取第一条，
+        用户根本不知道带进来的是哪一条。
+        """
+        from PyQt5.QtWidgets import QFileDialog, QInputDialog
 
         path, _ = QFileDialog.getOpenFileName(
-            self, "载入一条数据（Excel / CSV 第一条）", "",
+            self, "载入一行数据（Excel / CSV）", "",
             "表格 (*.xlsx *.xls *.csv)")
         if not path:
             return
         try:
-            values = self._record_from_file(path)
+            from batch.importer import read_table
+
+            headers, rows = read_table(path)
         except Exception as e:  # noqa: BLE001 — 读表失败只提示，不崩
             QMessageBox.warning(self, "载入失败", str(e))
             return
+        if not rows:
+            QMessageBox.warning(self, "载入失败", "这张表没有数据行")
+            return
+
+        index = 0
+        if len(rows) > 1:
+            items = [self._row_label(row, i) for i, row in enumerate(rows[:50])]
+            choice, ok = QInputDialog.getItem(
+                self, "选一行数据",
+                f"{os.path.basename(path)}：要用哪一行？", items, 0, False)
+            if not ok:
+                return
+            index = items.index(choice)
+
+        row = rows[index]
+        values = self._record_from_row(row)
         if not values:
             QMessageBox.warning(
                 self, "载入失败",
-                "没认出任何字段——请检查表头是否在配方的列名字典里，"
-                "或先补进 config/import_mapping.yaml")
+                "没认出任何字段——请检查表头是否在列名字典里，"
+                "或先在品种编辑页用「📄 从样例表对齐字段」配一遍")
             return
 
         self.page_panel.feed_input(values)
         for group in self.property_panel.source_groups.values():
             group.set_values(values)
+        row_no = row.get("__row__") or (index + 2)
         self.statusBar().showMessage(
-            f"已载入 {os.path.basename(path)}：{len(values)} 个字段")
+            f"已载入 {os.path.basename(path)} 第 {row_no} 行：{len(values)} 个字段")
 
     @staticmethod
-    def _record_from_file(path: str) -> dict:
-        """读表头 + 第一条数据 → {品种属性名: 值}（复用导入用的列名字典）。"""
-        import yaml
+    def _row_label(row: dict, index: int) -> str:
+        """选行列表里的一行文字：``第 12 行 · 张小明 · 410305…``。"""
+        row_no = row.get("__row__") or (index + 2)
+        parts = [f"第 {row_no} 行"]
+        for value in row.values():          # 挑前两个非空值做标识（不猜字段名）
+            text = str(value or "").strip()
+            if text and text != str(row_no):
+                parts.append(text[:18])
+            if len(parts) >= 3:
+                break
+        return " · ".join(parts)
 
-        from batch.importer import ColumnMapper, read_table
-        from batch.recipe import Recipe
-
-        recipe = Recipe.load()
-        with open(recipe.mapping_path, "r", encoding="utf-8") as f:
-            mapper = ColumnMapper(yaml.safe_load(f) or {})
+    @classmethod
+    def _record_from_file(cls, path: str, row_index: int = 0) -> dict:
+        """读表 → 取第 ``row_index`` 行（0-based）→ ``{品种属性名: 值}``。"""
+        from batch.importer import read_table
 
         headers, rows = read_table(path)
         if not rows:
             return {}
-        column_map = mapper.resolve(headers)          # {明细字段名: 源列名}
-        inverse = {field: prop for prop, field in recipe.property_map.items()}
-        row = rows[0]
+        return cls._record_from_row(rows[min(row_index, len(rows) - 1)])
 
+    @staticmethod
+    def _record_from_row(row: dict) -> dict:
+        """按配方的列名字典（含本地覆盖）把一行映射成 {品种属性名: 值}。"""
+        from batch.importer import ColumnMapper
+        from batch.recipe import Recipe
+        from core.column_dict import load_mapping
+
+        recipe = Recipe.load()
+        mapper = ColumnMapper(load_mapping(recipe.mapping_path) or {})
+        inverse = {field: prop for prop, field in recipe.property_map.items()}
+
+        headers = [k for k in row.keys() if not str(k).startswith("__")]
+        column_map = mapper.resolve(headers)          # {明细字段名: 源列名}
         values = {}
         for fieldname, column in column_map.items():
             prop = inverse.get(fieldname)

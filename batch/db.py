@@ -94,6 +94,8 @@ _MIGRATIONS: Dict[str, Dict[str, str]] = {
         "grade": "TEXT DEFAULT ''",
         "student_level": "TEXT DEFAULT ''",
         "source_image": "TEXT DEFAULT ''",
+        "source_row": "INTEGER DEFAULT 0",
+        "source_sheet": "TEXT DEFAULT ''",
     },
 }
 
@@ -107,6 +109,7 @@ _WRITABLE_FIELDS = (
     "school", "grade", "class_name", "student_level",
     "period_start", "period_end",
     "status", "fail_reason", "screenshot", "source_image", "retry_count",
+    "source_row", "source_sheet",
 )
 
 
@@ -215,6 +218,8 @@ class BatchDB:
             "fail_reason": applicant.fail_reason,
             "screenshot": applicant.screenshot,
             "source_image": applicant.source_image,
+            "source_row": int(getattr(applicant, "source_row", 0) or 0),
+            "source_sheet": getattr(applicant, "source_sheet", "") or "",
             "retry_count": applicant.retry_count,
             "created_at": ts,
             "updated_at": ts,

@@ -169,6 +169,10 @@ class Applicant:
     fail_reason: str = ""
     screenshot: str = ""
     source_image: str = ""
+    #: 来源行号（表格里**人看到的那一行**，1-based；0 = 未知/非表格来源）
+    source_row: int = 0
+    #: 来源工作表名（Excel 多 sheet 时用）
+    source_sheet: str = ""
     retry_count: int = 0
 
     created_at: str = ""
@@ -218,6 +222,8 @@ class Applicant:
             fail_reason=row["fail_reason"] or "",
             screenshot=row["screenshot"] or "",
             source_image=(row["source_image"] or "") if "source_image" in keys else "",
+            source_row=int(row["source_row"] or 0) if "source_row" in keys else 0,
+            source_sheet=(row["source_sheet"] or "") if "source_sheet" in keys else "",
             retry_count=row["retry_count"] or 0,
             created_at=row["created_at"] or "",
             updated_at=row["updated_at"] or "",

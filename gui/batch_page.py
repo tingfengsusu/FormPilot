@@ -33,7 +33,7 @@ from batch.recipe import Recipe
 from batch.reviewer import ReviewItem, Reviewer
 from .theme import mark
 
-_TABLE_COLUMNS = ("id", "姓名", "学校", "年级", "班级", "状态", "失败/异常原因")
+_TABLE_COLUMNS = ("id", "姓名", "学校", "年级", "班级", "状态", "来源", "失败/异常原因")
 
 
 class _RunWorker(QThread):
@@ -318,6 +318,7 @@ class BatchPage(QWidget):
         for row, applicant in enumerate(applicants):
             values = (applicant.id, applicant.name, applicant.school,
                       applicant.grade, applicant.class_name, applicant.status,
+                      f"第 {applicant.source_row} 行" if applicant.source_row else "",
                       applicant.fail_reason)
             for column, value in enumerate(values):
                 cell = QTableWidgetItem("" if value is None else str(value))
@@ -365,7 +366,11 @@ class BatchPage(QWidget):
             f"{applicant.name}（id={applicant.id}）"
             + ("　⚠ 有异常项" if not item.clean else "　✅ 无异常项"))
 
+        origin = [p for p in (str(applicant.source_sheet or ""),
+                              f"第 {applicant.source_row} 行" if applicant.source_row else "")
+                  if p]
         lines = [
+            f"来源：{' · '.join(origin) if origin else '—（非表格来源）'}",
             f"姓名：{applicant.name}",
             f"身份证号：{applicant.display_id_card}",
             f"手机号：{applicant.phone}",

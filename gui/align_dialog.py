@@ -51,6 +51,7 @@ class AlignDialog(QDialog):
 
         suggestions = suggest_alignments(list(columns), list(sample_rows),
                                         self._page_fields, dictionary)
+        self._suggestions = suggestions          # 写回字典时要用（哪一列属于哪个字段）
         # 页面有、但没被任何列认领的控件，也列出来（可能来自其它数据源）
         self._extra_fields = unmatched_page_fields(suggestions, self._page_fields)
 
@@ -165,6 +166,25 @@ class AlignDialog(QDialog):
         self._summary.setText("｜".join(parts) if parts else "列与页面字段已全部对上")
 
     # ------------------------------------------------------------------
+    def dictionary_updates(self) -> Dict[str, List[str]]:
+        """确认后要写回列名字典的内容：``{字段名: [这次的列名]}``。
+
+        只收"**字典已认得这个字段、但列名是新写法**"的情况（如"联系电话2"→ phone）——
+        这正是字典该长大的地方。列名压根没对上任何字段的，**不硬塞**（那需要在
+        业务配置里声明新字段，不是加别名能解决的）。
+        """
+        updates: Dict[str, List[str]] = {}
+        for row in range(self.table.rowCount()):
+            check = self.table.cellWidget(row, 0)
+            if not isinstance(check, QCheckBox) or not check.isChecked():
+                continue
+            if row >= len(self._suggestions):
+                continue                          # 未被认领的页面字段那几行，跳过
+            suggestion = self._suggestions[row]
+            if suggestion.field and suggestion.column:
+                updates.setdefault(suggestion.field, []).append(suggestion.column)
+        return updates
+
     def result_rows(self) -> List[Dict[str, Any]]:
         """确认后的结果：``[{property, locator, transform}]``（只含勾选且有 locator 的）。"""
         out: List[Dict[str, Any]] = []

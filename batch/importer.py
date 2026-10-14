@@ -116,16 +116,22 @@ def _read_excel(path: str, sheet: Optional[str] = None) -> Tuple[List[str], List
     rows_iter = ws.iter_rows(values_only=True)
 
     headers: List[str] = []
-    for row in rows_iter:
+    header_row = 0
+    for row_no, row in enumerate(rows_iter, start=1):
         if row and any(str(c).strip() for c in row if c is not None):
             headers = ["" if c is None else str(c).strip() for c in row]
+            header_row = row_no
             break
 
+    sheet_name = getattr(ws, "title", "") or ""
     rows: List[dict] = []
-    for row in rows_iter:
+    for row_no, row in enumerate(rows_iter, start=header_row + 1):
         if row is None or not any(c is not None and str(c).strip() for c in row):
-            continue  # 全空行
-        rows.append({headers[i]: row[i] for i in range(min(len(headers), len(row)))})
+            continue  # 全空行（**不重排行号**：__row__ 就是 Excel 里人看到的行号）
+        data = {headers[i]: row[i] for i in range(min(len(headers), len(row)))}
+        data["__row__"] = row_no
+        data["__sheet__"] = sheet_name
+        rows.append(data)
     wb.close()
     return headers, rows
 
@@ -138,8 +144,11 @@ def _read_csv(path: str) -> Tuple[List[str], List[dict]]:
             with open(path, "r", encoding=encoding, newline="") as f:
                 reader = csv.DictReader(f)
                 headers = [h.strip() if h else "" for h in (reader.fieldnames or [])]
-                rows = [{k.strip() if k else k: v for k, v in row.items()}
-                        for row in reader]
+                rows = []
+                for row_no, row in enumerate(reader, start=2):   # 第 1 行是表头
+                    data = {k.strip() if k else k: v for k, v in row.items()}
+                    data["__row__"] = row_no
+                    rows.append(data)
             return headers, rows
         except UnicodeDecodeError as e:
             last_error = e
@@ -243,7 +252,10 @@ class Importer:
         self.dictionaries = dictionaries or self.recipe.build_dictionaries()
         self.validator = validator or self.recipe.build_validator(self.dictionaries)
         from .recipe import load_batch_settings
-        mapping_cfg = _load_yaml(self.recipe.mapping_path) or \
+        # 基础字典 + import_mapping.local.yaml（「从样例表对齐字段」自动追加的别名）
+        from core.column_dict import load_mapping
+
+        mapping_cfg = load_mapping(self.recipe.mapping_path) or \
             load_batch_settings().get("import", {}).get("mapping", {})
         self.mapper = ColumnMapper(mapping_cfg if isinstance(mapping_cfg, dict) else {})
         self.validate_on_import = bool(
@@ -357,6 +369,8 @@ class Importer:
             period_end=period_end,
             status=STATUS_PENDING,
             source_image=get("source_image"),
+            source_row=int(row.get("__row__") or 0),
+            source_sheet=str(row.get("__sheet__") or ""),
         )
         applicant.adjust_notes.extend(adjust_notes)
         return applicant

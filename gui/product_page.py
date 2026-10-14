@@ -390,8 +390,20 @@ class ProductPage(QWidget):
         for item in picked:
             self._append_row(item["property"], item["locator"], True, True,
                              "plain", item.get("transform", ""), False)
-        self.status_label.setText(
-            f"已按样例表写入 {len(picked)} 个字段 —— 核对后点「💾 保存」")
+        # 写回列名字典：新认出来的列名攒进 import_mapping.local.yaml（下次自动认得）
+        written = 0
+        try:
+            from batch.recipe import Recipe
+            from core.column_dict import append_aliases, local_path_for
+
+            written = append_aliases(local_path_for(Recipe.load().mapping_path),
+                                     dialog.dictionary_updates())
+        except Exception:  # noqa: BLE001 — 字典写不成不该影响这次对齐
+            written = 0
+        note = f"已按样例表写入 {len(picked)} 个字段"
+        if written:
+            note += f"；列名字典新增 {written} 个别名（写进 import_mapping.local.yaml）"
+        self.status_label.setText(note + " —— 核对后点「💾 保存」")
 
     def _load_column_dictionary(self) -> dict:
         """列名字典（config/import_mapping.yaml 的 columns 段）——只读，用来出建议。"""
