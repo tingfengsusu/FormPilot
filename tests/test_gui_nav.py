@@ -301,6 +301,38 @@ def test_other_group_drop_uses_column_dictionary():
     assert values.get("学生身份证号") == "410305201509011230"
 
 
+def test_panel_routes_dropped_file_by_type():
+    """拖放落在面板任意位置也要接住：按类型路由到对应来源组。
+
+    原来只有分组框接拖放，拖到分组之间的空隙/空白处就"没反应"（用户实测反馈）。
+    """
+    from gui.property_panel import PropertyPanel
+
+    panel = PropertyPanel()
+
+    # 没选品种（没有任何分组）→ 给出明确原因，而不是静默
+    got = []
+    panel.source_extracted.connect(lambda name, values: got.append(values))
+    assert panel.route_dropped_file("某文件.csv") == ""
+    assert got and "_error" in got[0]
+
+    # 选一个品种后有分组：图片 → OCR 组；表格 → Excel名单/其他
+    product = next(iter(MainWindow().product_list.products.values()))
+    panel.show_for_product(product)
+
+    calls = []
+    for name, group in panel.source_groups.items():
+        group._process_input = (lambda n: (lambda path: calls.append(n)))(name)
+
+    target_img = panel.route_dropped_file("身份证.png")
+    target_sheet = panel.route_dropped_file("台账.csv")
+
+    assert target_img and target_sheet
+    assert calls == [target_img, target_sheet]        # 两个文件都被送进处理函数
+    if "身份证OCR" in panel.source_groups:
+        assert target_img == "身份证OCR"              # 图片优先给身份证 OCR
+
+
 def main() -> int:
     test_toolbar_batch_button_uses_current_product()
     print("  · 工具栏「批量录入」用当前选中的品种启动 + 返回 ✓")
@@ -324,6 +356,8 @@ def main() -> int:
     print("  · 拖到大框里真的会读（合成 drop 事件 → 识别 → 填值）✓")
     test_other_group_drop_uses_column_dictionary()
     print("  · 「其他」组拖 Excel 按列名字典读出值（原来静默无反应）✓")
+    test_panel_routes_dropped_file_by_type()
+    print("  · 面板任意位置拖放都接住（按类型路由到来源组）✓")
     print("test_gui_nav.py 全部通过 ✓")
     return 0
 

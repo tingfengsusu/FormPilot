@@ -257,6 +257,13 @@ class SourceGroup(QGroupBox):
         try:
             result = self._source.extract(path)
             self.set_values(result)
+            # 读了文件但字段一个都没填上 → 明说，别让它看起来"没反应"
+            if not any(str(v).strip() for v in self.collect_values().values()):
+                self.extracted.emit(self.source_name, {
+                    "_error": f"文件读到了，但没有任何字段对得上"
+                              f"（{os.path.basename(path)}）；列名可用"
+                              "「📄 从样例表对齐字段」配一遍"})
+                return
             # 通知外部（主窗口）更新属性池
             self.extracted.emit(self.source_name, result)
         except Exception as e:  # noqa: BLE001

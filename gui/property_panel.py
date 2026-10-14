@@ -1,6 +1,8 @@
 """中间：属性面板 — 按来源分组显示。"""
 from __future__ import annotations
 
+import os
+
 from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QScrollArea)
 
@@ -8,6 +10,10 @@ from core.product import Product
 from .widgets.source_group import SourceGroup
 from sources.factory import create_source
 from .theme import mark
+
+#: 按扩展名判断文件类型（拖放路由用）
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+_SHEET_EXTS = {".xlsx", ".xls", ".xlsm", ".csv"}
 
 
 class PropertyPanel(QWidget):
@@ -18,6 +24,9 @@ class PropertyPanel(QWidget):
 
     def __init__(self, parent=None, prop_def_library=None):
         super().__init__(parent)
+        # 整个面板都接受拖放：拖到分组之间的空隙、面板空白处也要生效
+        #（原来只有分组框接拖放，拖偏一点就"没反应"——实测反馈）
+        self.setAcceptDrops(True)
         self._outer_layout = QVBoxLayout(self)
         self._outer_layout.addWidget(QLabel("⚙️ 属性面板"))
 
@@ -85,6 +94,50 @@ class PropertyPanel(QWidget):
                     pass
 
         self.container_layout.addStretch()
+
+    # ------------------------------------------------------------------
+    # 拖放：整个面板都是落点，按文件类型路由到对应来源组
+    # ------------------------------------------------------------------
+    def dragEnterEvent(self, event):  # noqa: N802 — Qt 命名
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):  # noqa: N802 — Qt 命名
+        paths = [u.toLocalFile() for u in event.mimeData().urls()]
+        for path in [p for p in paths if p]:
+            self.route_dropped_file(path)
+        event.acceptProposedAction()
+
+    def route_dropped_file(self, path: str) -> str:
+        """把拖进来的文件交给合适的分组；返回实际交给的分组名（空 = 没接住）。
+
+        规则：图片 → 身份证OCR/户口本OCR；表格 → Excel名单；
+        没有对应分组（新业务的字段常只在「其他」组）→ 交给「其他」组，
+        它带列名字典兜底读表。
+        """
+        ext = os.path.splitext(path)[1].lower()
+        target = None
+        if ext in _IMAGE_EXTS:
+            for name in ("身份证OCR", "户口本OCR"):
+                if name in self.source_groups:
+                    target = self.source_groups[name]
+                    break
+        elif ext in _SHEET_EXTS:
+            target = self.source_groups.get("Excel名单")
+
+        if target is None:
+            target = self.source_groups.get("其他") or next(
+                iter(self.source_groups.values()), None)
+        if target is None:
+            self.source_extracted.emit(
+                "拖入文件",
+                {"_error": f"当前没有可接文件的字段分组"
+                           f"（{os.path.basename(path)}）——请先选一个品种"})
+            return ""
+        target._process_input(path)          # 与"拖到分组上"完全同一条链路
+        return target.source_name
 
     def _on_source_extracted(self, source_name: str, values: dict):
         """来源识别完成，转发给主窗口（用于更新属性池/状态栏）。"""
