@@ -71,7 +71,8 @@ class PropertyPanel(QWidget):
             # 绑定对应的 PropertySource 实例（用于拖图识别）
             source = create_source(source_name)
             group = SourceGroup(source_name, fields, source=source,
-                                field_defs=defs)
+                                field_defs=defs,
+                                fallback_loader=self._load_from_table)
             group.extracted.connect(self._on_source_extracted)
             self.source_groups[source_name] = group
             self.container_layout.addWidget(group)
@@ -88,6 +89,20 @@ class PropertyPanel(QWidget):
     def _on_source_extracted(self, source_name: str, values: dict):
         """来源识别完成，转发给主窗口（用于更新属性池/状态栏）。"""
         self.source_extracted.emit(source_name, values)
+
+    @staticmethod
+    def _load_from_table(path: str) -> dict:
+        """「其他」组的兜底读表：按列名字典 + property_map 读第一行。
+
+        新业务的字段没有归属来源，全落在「其他」组——没有这个兜底，
+        拖文件进去会静默无反应（实测反馈）。
+        """
+        from batch.importer import map_row_to_properties, read_table
+
+        _headers, rows = read_table(path)
+        if not rows:
+            return {}
+        return map_row_to_properties(rows[0])
 
     def _build_source_fields(self, product: Product) -> dict:
         """依据品种的属性名，把字段归类到各来源组。

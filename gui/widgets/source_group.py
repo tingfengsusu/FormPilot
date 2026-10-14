@@ -72,10 +72,13 @@ class SourceGroup(QGroupBox):
 
     def __init__(self, source_name: str, fields: List[str],
                  source: Optional[PropertySource] = None,
-                 field_defs: Optional[dict] = None, parent=None):
+                 field_defs: Optional[dict] = None, parent=None,
+                 fallback_loader=None):
         super().__init__(f"📌 {source_name}", parent)
         self.source_name = source_name
         self._source = source  # 关联的 PropertySource 实例（用于 extract）
+        #: 没有对应来源时的兜底读表函数（按列名字典把文件的第一行映射成属性值）
+        self._fallback_loader = fallback_loader
         self._preview_path: Optional[str] = None
         field_defs = field_defs or {}
 
@@ -233,6 +236,21 @@ class SourceGroup(QGroupBox):
     def _process_input(self, path: str):
         """喂入输入，调用来源的 extract()，回填字段并预览图片。"""
         if self._source is None:
+            # 没有对应来源（新业务的字段常归到「其他」组）：用列名字典直接读表兜底，
+            # 否则拖进来的文件会**静默无反应**（实测反馈）
+            if self._fallback_loader is None:
+                return
+            self._show_preview(path)
+            try:
+                result = self._fallback_loader(path) or {}
+            except Exception as e:  # noqa: BLE001 — 读表失败要让它看得见
+                result = {"_error": f"读取失败：{str(e)[:150]}"}
+            if not any(str(v).strip() for k, v in result.items()
+                       if not str(k).startswith("_")):
+                result = {"_error": "这份表的列名没对上任何字段 —— 可在品种编辑页用"
+                                    "「📄 从样例表对齐字段」把列名配一遍"}
+            self.set_values(result)
+            self.extracted.emit(self.source_name, result)
             return
         # 先展示原图，识别失败时用户也能看到上传了什么
         self._show_preview(path)

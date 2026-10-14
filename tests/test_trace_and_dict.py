@@ -120,7 +120,7 @@ def test_new_business_table_points_to_alignment():
             ok, detail = Importer(db, recipe=recipe).check_table(path)
 
             assert not ok
-            assert "没能认出" in detail              # 是字典不认列名，不是品种错
+            assert "认不出" in detail                # 是字典不认列名，不是品种错
             assert "从样例表对齐字段" in detail       # 给出可操作的下一步
         finally:
             db.close()

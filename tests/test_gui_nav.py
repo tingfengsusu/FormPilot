@@ -282,6 +282,25 @@ def test_drop_file_on_group_reads_it():
         assert second.collect_values().get("学生姓名") == "来自 某张身份证.png"
 
 
+def test_other_group_drop_uses_column_dictionary():
+    """「其他」组的兜底读表：新业务字段没有来源时，拖 Excel 进去也要能读出值。
+
+    原来这种分组 `_source is None` → 直接 return，拖文件**静默无反应**（用户实测反馈）。
+    """
+    from gui.property_panel import PropertyPanel
+
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "台账.csv")
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write("被保人姓名,被保人身份证,监护人电话\n"
+                    "张小明,410305201509011230,13900000000\n")
+
+        values = PropertyPanel._load_from_table(path)
+
+    assert values.get("学生姓名") == "张小明"
+    assert values.get("学生身份证号") == "410305201509011230"
+
+
 def main() -> int:
     test_toolbar_batch_button_uses_current_product()
     print("  · 工具栏「批量录入」用当前选中的品种启动 + 返回 ✓")
@@ -303,6 +322,8 @@ def main() -> int:
     print("  · 拖文件到输入框上生效（事件穿透到来源分组）✓")
     test_drop_file_on_group_reads_it()
     print("  · 拖到大框里真的会读（合成 drop 事件 → 识别 → 填值）✓")
+    test_other_group_drop_uses_column_dictionary()
+    print("  · 「其他」组拖 Excel 按列名字典读出值（原来静默无反应）✓")
     print("test_gui_nav.py 全部通过 ✓")
     return 0
 

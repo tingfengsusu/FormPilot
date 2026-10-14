@@ -458,10 +458,13 @@ class BatchPage(QWidget):
         recipe = self._runner_recipe()
         importer = Importer(self.db, recipe=recipe)
         ok, detail = importer.check_table(path)
-        if not ok and QMessageBox.question(
-                self, "台账与品种可能对不上",
-                detail + "\n\n仍然导入吗？") != QMessageBox.Yes:
-            return
+        if not ok:
+            from .dialogs import ask
+
+            if not ask(self, "台账与当前品种可能对不上",
+                       detail + "\n\n仍然导入吗？",
+                       yes="仍然导入", no="取消"):
+                return
         try:
             report = importer.import_file(path, sheet="")
         except Exception as e:  # noqa: BLE001
@@ -487,12 +490,13 @@ class BatchPage(QWidget):
         batch = self.db.get_batch(batch_id)
         chosen = self.product_combo.currentText()
         if batch is not None and batch.product and batch.product != chosen:
-            if QMessageBox.question(
-                    self, "品种不一致",
-                    f"批次「{batch.name}」是为「{batch.product}」导入的，"
-                    f"当前选的是「{chosen}」。\n\n"
-                    "继续会用当前品种的页面填这批数据，确定吗？"
-            ) != QMessageBox.Yes:
+            from .dialogs import ask
+
+            if not ask(self, "品种不一致",
+                       f"批次「{batch.name}」是为「{batch.product}」导入的，"
+                       f"当前选的是「{chosen}」。\n\n"
+                       "继续会用当前品种的页面填这批数据，确定吗？",
+                       yes="继续", no="取消"):
                 return
         if QMessageBox.question(
                 self, "批量录入",

@@ -15,7 +15,8 @@ from __future__ import annotations
 import csv
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Tuple)
 
 from .db import BatchDB
 from .dictionaries import MATCH_AMBIGUOUS, MATCH_UNMATCHED, DictionarySet
@@ -299,10 +300,16 @@ class Importer:
         preview = "、".join(str(h) for h in headers[:8]) + ("…" if len(headers) > 8 else "")
 
         # 判定分三种，**别都归成"品种对不上"**（实测：新业务的正确台账会被误杀）
-        if not mapped:
+        recognized = len(column_map)                      # 字典认出的列数
+        header_total = max(1, len([h for h in headers if str(h).strip()]))
+        rate = recognized / header_total
+
+        if not overlap and rate < 0.5:
+            # 表头**大部分都没被字典认出** = 多半是新业务的表 —— 别说"品种选错"，
+            # 否则用户明明选对了品种却被告知"确认品种"（实测反馈）
             return False, (
-                "列名字典没能认出这份台账的任何列名：\n"
-                f"· 台账表头：{preview}\n"
+                f"列名字典几乎认不出这份表的列名（只认出 {recognized}/{header_total} 列）：\n"
+                f"· 表头：{preview}\n"
                 "→ 若是**新业务**的表：先在品种编辑页用「📄 从样例表对齐字段」配一遍列名"
                 "（别名会写进 import_mapping.local.yaml，之后预检才准）；\n"
                 "→ 如果是选错了文件或表头不规范，请重新选择。")
@@ -312,7 +319,7 @@ class Importer:
             return False, (
                 f"覆盖不足：这份台账只能提供 {len(overlap)}/{len(expected)} 个"
                 f"当前品种需要的字段（{ratio:.0%}）：\n"
-                f"· 能提供：{'、'.join(sorted(overlap))}\n"
+                f"· 能提供：{'、'.join(sorted(overlap)) or '（无）'}\n"
                 f"· 缺少：{'、'.join(sorted(missing)) or '（无）'}\n"
                 "→ 确认批量页顶部的「品种」是否选对；若是新业务，先对齐字段/补列名字典。")
 
@@ -532,7 +539,31 @@ def _default_batch_name(path: str) -> str:
     return f"{base} {now_str()[:10]}"
 
 
-def _load_yaml(path: str) -> dict:
+def map_row_to_properties(row: Mapping[str, Any], recipe: Any = None) -> dict:
+    """把一行（表头→值）按列名字典 + ``property_map`` 映射成 ``{品种属性名: 值}``。
+
+    拖文件到属性面板、单条「载入数据」都用这条链；``__row__`` 之类的内部键忽略。
+    """
+    from core.column_dict import load_mapping
+
+    recipe = recipe or Recipe.load()
+    mapper = ColumnMapper(load_mapping(recipe.mapping_path) or {})
+    inverse = {field: prop for prop, field in recipe.property_map.items()}
+
+    headers = [k for k in row.keys() if not str(k).startswith("__")]
+    column_map = mapper.resolve(headers)              # {明细字段名: 源列名}
+    values: dict = {}
+    for fieldname, column in column_map.items():
+        prop = inverse.get(fieldname)
+        if not prop:
+            continue
+        value = str(row.get(column) or "").strip()
+        if value:
+            values[prop] = value
+    return values
+
+
+def _read_yaml(path: str) -> dict:
     import yaml
     if not path or not os.path.exists(path):
         return {}
