@@ -19,6 +19,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("FormPilot - 自动表单录入助手")
         self.resize(1280, 800)
+        # 整个窗口都接受拖放：拖到哪儿都行（面板空白处、分组之间、甚至边缘），
+        # 一律转交属性面板按类型路由 —— 免得"拖偏一点就以为没反应"
+        self.setAcceptDrops(True)
 
         self._build_toolbar()
         self._build_splitter()
@@ -254,6 +257,25 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentIndex(1)
         self.prop_mgmt_action.setText("⬅ 返回主界面")
         self.statusBar().showMessage("属性管理：编辑后记得点「💾 保存」")
+
+    # ------------------------------------------------------------------
+    # 拖放：整窗兜底（属性面板自己会先接住，这里是最后一道）
+    # ------------------------------------------------------------------
+    def dragEnterEvent(self, event):  # noqa: N802 — Qt 命名
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):  # noqa: N802 — Qt 命名
+        names = []
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if path:
+                names.append(self.property_panel.route_dropped_file(path)
+                             or "（没有可接的分组）")
+        self.statusBar().showMessage(f"拖入文件 → {('、'.join(names)) or '未识别'}")
+        event.acceptProposedAction()
 
     def _on_open_batch_from_workbench(self) -> None:
         """工具栏「📋 批量录入」：进批量页，默认用**当前选中的品种**。"""
