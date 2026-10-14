@@ -214,6 +214,32 @@ def test_product_page_warns_before_dropping_edits():
         assert page.has_unsaved_changes() is False     # 改回去：又干净了
 
 
+def test_align_dialog_suggests_and_returns_rows():
+    """「从样例表对齐字段」：建议来自列名+页面标签，样例值打码，确认后出结果。"""
+    from gui.align_dialog import AlignDialog, mask_sample
+
+    dictionary = {"name": ["被保人姓名", "姓名"],
+                  "id_card": ["被保人身份证", "身份证"]}
+    page_fields = [
+        {"locator": 'input[placeholder="请录入姓名"]', "placeholder": "请录入姓名"},
+        {"locator": 'input[placeholder="请录入身份证"]', "placeholder": "请录入身份证"},
+    ]
+    rows = [{"被保人姓名": "张小明", "被保人身份证": "410305201509011230",
+             "缴费状态": "已缴"}]
+
+    dialog = AlignDialog(["被保人姓名", "被保人身份证", "缴费状态"],
+                         rows, page_fields, dictionary)
+    picked = {r["property"]: r["locator"] for r in dialog.result_rows()}
+
+    assert 'input[placeholder="请录入姓名"]' in picked["被保人姓名"]
+    assert "身份证" in picked["被保人身份证"]
+    assert "缴费状态" not in picked                # 对不上就不写进来
+
+    # 样例值打码（界面上显示，不外发）
+    assert mask_sample("410305201509011230", "id_card").startswith("410305")
+    assert "*" in mask_sample("13900000000", "phone")
+
+
 def main() -> int:
     test_business_page_lists_products_with_two_actions()
     print("  · 业务页：品种清单 + 每行的单条/批量 ✓")
@@ -231,6 +257,8 @@ def main() -> int:
     print("  · 未保存修改判定 ✓")
     test_load_record_from_file_maps_columns_to_properties()
     print("  · 载入数据：列名字典 → 品种属性名 ✓")
+    test_align_dialog_suggests_and_returns_rows()
+    print("  · 从样例表对齐字段：建议 + 打码 + 未命中不写入 ✓")
     print("test_gui_nav.py 全部通过 ✓")
     return 0
 

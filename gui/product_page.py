@@ -27,6 +27,7 @@ from core.product_library import ProductLibrary
 from core.property_def import PropertyDefLibrary
 from engine.transforms import TRANSFORMS, suggest_transform
 
+from .align_dialog import AlignDialog
 from .theme import mark
 
 #: 字段填写策略（与 core/product.FieldMapping.fill_mode 一致）
@@ -170,6 +171,11 @@ class ProductPage(QWidget):
         mark(add_btn, "primary")
         add_btn.clicked.connect(self.add_properties)
         row.addWidget(add_btn)
+        align_btn = QPushButton("📄 从样例表对齐字段")
+        align_btn.setToolTip("选一份台账样例：左边是它的列，右边是扫到的页面字段，\n"
+                             "确认一次就把「列 → 页面字段」写进这张表（不用手工逐行敲）")
+        align_btn.clicked.connect(self.align_from_sample)
+        row.addWidget(align_btn)
         up_btn = QPushButton("↑ 上移")
         up_btn.clicked.connect(lambda: self._move_row(-1))
         row.addWidget(up_btn)
@@ -325,6 +331,79 @@ class ProductPage(QWidget):
             if name in existing:
                 continue
             self._append_row(name, "", True, True, "plain")
+
+    def align_from_sample(self) -> None:
+        """从样例表对齐字段：选表 → 扫描页面 → 出建议 → 人确认 → 写入属性表。
+
+        这是"接入一个新页面"最费时的那一步（列 → 字段 → locator 本来要靠人脑配）。
+        """
+        from PyQt5.QtWidgets import QFileDialog
+
+        url = self.url_edit.text().strip()
+        if not url:
+            QMessageBox.information(self, "提示", "先在上面填目标 URL —— 要对齐页面字段")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选一份样例表（只用表头 + 前几行，不外发）", "",
+            "表格 (*.xlsx *.xls *.csv)")
+        if not path:
+            return
+        try:
+            from batch.importer import read_table
+
+            headers, rows = read_table(path)
+        except Exception as e:  # noqa: BLE001 — 读表失败只提示
+            QMessageBox.warning(self, "读表失败", str(e)[:300])
+            return
+        if not headers:
+            QMessageBox.warning(self, "读表失败", "没读到表头")
+            return
+
+        self.status_label.setText("正在扫描页面字段……")
+        try:
+            from PyQt5.QtWidgets import QApplication
+
+            QApplication.processEvents()
+            from page.scanner import Scanner
+
+            page_fields = Scanner().scan(url, context=self._collect_context())
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(self, "扫描失败", str(e)[:300])
+            self.status_label.setText("扫描失败：请确认页面能打开")
+            return
+
+        dictionary = self._load_column_dictionary()
+        dialog = AlignDialog(headers, rows[:2], page_fields, dictionary, self)
+        if dialog.exec_() != QDialog.Accepted:
+            self.status_label.setText("已取消对齐")
+            return
+        picked = dialog.result_rows()
+        if not picked:
+            self.status_label.setText("对齐结果为空：没有勾选任何字段")
+            return
+        if self.table.rowCount() and QMessageBox.question(
+                self, "覆盖属性表",
+                "会用对齐结果**替换**当前属性表，继续吗？") != QMessageBox.Yes:
+            return
+
+        self.table.setRowCount(0)
+        for item in picked:
+            self._append_row(item["property"], item["locator"], True, True,
+                             "plain", item.get("transform", ""), False)
+        self.status_label.setText(
+            f"已按样例表写入 {len(picked)} 个字段 —— 核对后点「💾 保存」")
+
+    def _load_column_dictionary(self) -> dict:
+        """列名字典（config/import_mapping.yaml 的 columns 段）——只读，用来出建议。"""
+        try:
+            import yaml
+
+            from batch.recipe import Recipe
+
+            with open(Recipe.load().mapping_path, "r", encoding="utf-8") as f:
+                return (yaml.safe_load(f) or {}).get("columns") or {}
+        except Exception:  # noqa: BLE001 — 没有字典就只靠页面标签匹配
+            return {}
 
     def delete_rows(self) -> None:
         rows = sorted({index.row() for index in self.table.selectedIndexes()},
