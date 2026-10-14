@@ -220,6 +220,20 @@ def test_align_dialog_suggests_and_returns_rows():
     assert "*" in mask_sample("13900000000", "phone")
 
 
+def test_source_group_accepts_drops_through_inputs():
+    """拖文件到输入框上要生效：分组接受拖放，输入框本身不吃事件。"""
+    from PyQt5.QtWidgets import QLineEdit
+
+    from gui.widgets.source_group import SourceGroup
+
+    group = SourceGroup("身份证OCR", ["学生姓名"], source=None, field_defs={})
+    assert group.acceptDrops() is True
+    edits = group.findChildren(QLineEdit)
+    assert edits, "分组里应当有输入框"
+    # QLineEdit 默认接受文本拖放（会把文件路径插成文本）→ 必须关掉，让事件穿透到分组
+    assert all(edit.acceptDrops() is False for edit in edits)
+
+
 def main() -> int:
     test_toolbar_batch_button_uses_current_product()
     print("  · 工具栏「批量录入」用当前选中的品种启动 + 返回 ✓")
@@ -237,6 +251,8 @@ def main() -> int:
     print("  · 载入数据：列名字典 → 品种属性名 ✓")
     test_align_dialog_suggests_and_returns_rows()
     print("  · 从样例表对齐字段：建议 + 打码 + 未命中不写入 ✓")
+    test_source_group_accepts_drops_through_inputs()
+    print("  · 拖文件到输入框上生效（事件穿透到来源分组）✓")
     print("test_gui_nav.py 全部通过 ✓")
     return 0
 

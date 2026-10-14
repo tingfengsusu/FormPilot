@@ -265,6 +265,46 @@ class Importer:
             self.recipe.input_config.get("period_start_floor", ""))
 
     # ------------------------------------------------------------------
+    def check_table(self, path: str) -> Tuple[bool, str]:
+        """导入**前**预检：这份台账的表头能不能对得上当前品种。
+
+        判定链：列名字典能认出哪些列 → 明细字段名 → recipe.property_map 反查 →
+        与品种 field_mapping 的属性集取交集。一个都对不上就直接告诉用户，
+        别等跑完一百条才发现全是错的。
+        """
+        try:
+            headers, _rows = read_table(path)
+        except Exception as e:  # noqa: BLE001 — 读不了也要给出可读原因
+            return False, f"读表失败：{e}"
+        if not headers:
+            return False, "没读到表头"
+
+        column_map = self.mapper.resolve(headers)          # {明细字段名: 源列名}
+        inverse = {field: prop for prop, field in self.recipe.property_map.items()}
+        mapped = {inverse[f] for f in column_map if f in inverse}
+
+        product = None
+        try:
+            from core.product_library import ProductLibrary
+
+            for item in ProductLibrary().list_products():
+                if item.name == self.recipe.product_name:
+                    product = item
+                    break
+        except Exception:  # noqa: BLE001
+            product = None
+        expected = {m.property for m in (product.field_mapping if product else [])}
+
+        overlap = mapped & expected
+        if not overlap:
+            return False, (
+                "这份台账和当前品种对不上（导入后大概率全部录入失败）：\n"
+                f"· 台账里能认出的字段：{'、'.join(sorted(mapped)) or '（一个都没认出来）'}\n"
+                f"· 当前品种需要：{'、'.join(sorted(expected)) or '（品种未配置字段）'}\n"
+                "→ 请确认批量页顶部的「品种」，或先在品种编辑页用"
+                "「📄 从样例表对齐字段」把列名配好")
+        return True, f"可映射字段 {len(overlap)} 个：{'、'.join(sorted(overlap))}"
+
     def import_file(self, path: str, batch_name: str = "",
                     sheet: Optional[str] = None) -> ImportReport:
         """导入一个 Excel/CSV 文件，返回导入报告。"""
@@ -285,7 +325,8 @@ class Importer:
                 f"（已识别列：{column_map}）")
 
         name = batch_name or _default_batch_name(source_file)
-        report.batch = self.db.create_batch(name, source_file=source_file)
+        report.batch = self.db.create_batch(name, source_file=source_file,
+                                            product=self.recipe.product_name)
 
         applicants: List[Applicant] = []
         for index, row in enumerate(rows, start=2):  # 第 1 行是表头

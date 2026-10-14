@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS batch (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL,
   source_file TEXT,
+  product     TEXT DEFAULT '',
   total       INTEGER DEFAULT 0,
   created_at  TEXT NOT NULL
 );
@@ -86,6 +87,9 @@ CREATE INDEX IF NOT EXISTS idx_validation_applicant ON validation(applicant_id);
 
 #: 新增过的列（旧库自动补列，保证 schema 演进不丢数据）。
 _MIGRATIONS: Dict[str, Dict[str, str]] = {
+    "batch": {
+        "product": "TEXT DEFAULT ''",
+    },
     "applicant": {
         "payer_name": "TEXT DEFAULT ''",
         "payer_id_card": "TEXT DEFAULT ''",
@@ -152,12 +156,13 @@ class BatchDB:
     # ------------------------------------------------------------------
     # 批次
     # ------------------------------------------------------------------
-    def create_batch(self, name: str, source_file: str = "", total: int = 0) -> Batch:
+    def create_batch(self, name: str, source_file: str = "", total: int = 0,
+                     product: str = "") -> Batch:
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO batch (name, source_file, total, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (name, source_file, int(total), now_str()))
+                "INSERT INTO batch (name, source_file, total, created_at, product) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, source_file, int(total), now_str(), product))
             self._conn.commit()
             return self.get_batch(cur.lastrowid)
 

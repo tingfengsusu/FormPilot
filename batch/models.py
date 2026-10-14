@@ -118,15 +118,19 @@ class Batch:
     id: Optional[int] = None
     name: str = ""
     source_file: str = ""
+    #: 这份台账是为**哪个品种**导入的（导入时页面/配方选中的品种；老批次为空）
+    product: str = ""
     total: int = 0
     created_at: str = ""
 
     @classmethod
     def from_row(cls, row) -> "Batch":
+        keys = set(row.keys())
         return cls(
             id=row["id"],
             name=row["name"],
             source_file=row["source_file"] or "",
+            product=(row["product"] or "") if "product" in keys else "",
             total=row["total"] or 0,
             created_at=row["created_at"] or "",
         )

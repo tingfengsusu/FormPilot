@@ -23,6 +23,7 @@ from _helpers import use_temp_key
 
 from batch.db import BatchDB
 from batch.importer import Importer
+from batch.recipe import Recipe
 from core.column_dict import append_aliases, load_mapping, local_path_for
 
 _CSV = """被保人姓名,被保人身份证,监护人电话,学校,年级,班级,保险期限
@@ -73,6 +74,32 @@ def test_import_records_real_row_numbers():
             db.close()
 
 
+def test_import_records_product_and_preflight_blocks_mismatch():
+    """批次记住是为哪个品种导入的；表头对不上当前品种时预检要拦住。"""
+    import copy
+
+    with tempfile.TemporaryDirectory() as td:
+        use_temp_key(td)
+        path = _write_csv(td)
+        db = BatchDB(os.path.join(td, "t.db"))
+        try:
+            recipe = Recipe.load()
+            report = Importer(db, recipe=recipe).import_file(path, batch_name="品种绑定")
+            assert report.batch.product == recipe.product_name   # 记下品种
+
+            # 换成发票查验品种：这份学平险台账就对不上了
+            other = copy.deepcopy(recipe)
+            other.execute["product"] = "发票查验_国税总局"
+            ok, detail = Importer(db, recipe=other).check_table(path)
+            assert not ok and "对不上" in detail
+
+            # 用回学平险品种：能对上
+            ok, detail = Importer(db, recipe=recipe).check_table(path)
+            assert ok and "可映射字段" in detail
+        finally:
+            db.close()
+
+
 def test_load_one_row_by_index():
     """单条「载入数据」按行号取数（第 2 行 = 表里第 3 行）。"""
     from PyQt5.QtWidgets import QApplication
@@ -96,6 +123,8 @@ if __name__ == "__main__":
     print("  · 本地列名字典：追加/合并/不动基础文件 ✓")
     test_import_records_real_row_numbers()
     print("  · 导入记录带真实行号（表头第 1 行 → 数据从第 2 行）✓")
+    test_import_records_product_and_preflight_blocks_mismatch()
+    print("  · 批次记住品种 + 导入前预检拦住「台账/品种对不上」 ✓")
     test_load_one_row_by_index()
     print("  · 载入数据：可按行号取（不再固定第一条）✓")
     print("test_trace_and_dict.py 全部通过 ✓")

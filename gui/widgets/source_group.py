@@ -17,8 +17,9 @@ from typing import List, Optional
 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtWidgets import (QApplication, QDialog, QGroupBox, QLabel,
-                             QPushButton, QVBoxLayout)
+from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QGroupBox,
+                             QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+                             QSpinBox, QTextEdit, QVBoxLayout, QWidget)
 
 from .property_field import PropertyField
 from core.property_source import PropertySource
@@ -126,6 +127,15 @@ class SourceGroup(QGroupBox):
         # 启用拖拽：接受图片或任意文件
         if accepts_file:
             self.setAcceptDrops(True)
+            self.setToolTip("把身份证照片 / 名单文件**拖到这里**（或拖到下面的输入框上），"
+                            "也可以点「📤 上传输入」")
+            # 让拖放**穿透到分组本身**：输入框默认会吃掉拖放事件
+            # （QLineEdit 接受文本拖放，结果只是把文件路径插成文本），
+            # 关掉之后"拖到输入框上"= 拖到这个来源组，走同一套识别流程
+            for child in self.findChildren(QWidget):
+                if isinstance(child, (QLineEdit, QComboBox, QTextEdit,
+                                      QPlainTextEdit, QSpinBox)):
+                    child.setAcceptDrops(False)
 
     # ------------------------------------------------------------------
     # 字段读写

@@ -299,7 +299,9 @@ class BatchPage(QWidget):
         self.batch_list.blockSignals(True)
         self.batch_list.clear()
         for batch in self.db.list_batches():
-            item = QListWidgetItem(f"#{batch.id} {batch.name}（{batch.total} 条）")
+            tag = f"  [{batch.product}]" if batch.product else "  [未标注品种]"
+            item = QListWidgetItem(
+                f"#{batch.id} {batch.name}（{batch.total} 条）{tag}")
             item.setData(Qt.UserRole, batch.id)
             self.batch_list.addItem(item)
         self.batch_list.blockSignals(False)
@@ -451,7 +453,15 @@ class BatchPage(QWidget):
             return
         from batch.importer import Importer
 
-        importer = Importer(self.db, recipe=self.recipe)
+        # 用**批量页上选的品种**导入（不是配方默认的那个），并先做一次预检：
+        # 台账表头对不上当前品种就直接问，别等跑完一百条才发现全错
+        recipe = self._runner_recipe()
+        importer = Importer(self.db, recipe=recipe)
+        ok, detail = importer.check_table(path)
+        if not ok and QMessageBox.question(
+                self, "台账与品种可能对不上",
+                detail + "\n\n仍然导入吗？") != QMessageBox.Yes:
+            return
         try:
             report = importer.import_file(path, sheet="")
         except Exception as e:  # noqa: BLE001
@@ -472,6 +482,18 @@ class BatchPage(QWidget):
             return
         if self._worker is not None and self._worker.isRunning():
             return
+
+        # 批次是为哪个品种导入的？和当前选的不一致就先问一句
+        batch = self.db.get_batch(batch_id)
+        chosen = self.product_combo.currentText()
+        if batch is not None and batch.product and batch.product != chosen:
+            if QMessageBox.question(
+                    self, "品种不一致",
+                    f"批次「{batch.name}」是为「{batch.product}」导入的，"
+                    f"当前选的是「{chosen}」。\n\n"
+                    "继续会用当前品种的页面填这批数据，确定吗？"
+            ) != QMessageBox.Yes:
+                return
         if QMessageBox.question(
                 self, "批量录入",
                 f"将用「{self.product_combo.currentText()}」逐条打开页面填写"
