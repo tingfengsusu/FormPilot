@@ -32,10 +32,8 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         self.new_action = toolbar.addAction("+ 新建品种")
-        self.business_action = toolbar.addAction("🏢 保险业务")
-        self.business_action.setToolTip("保险业务：批量录入 / 台账复核 / 单条录入")
         self.load_action = toolbar.addAction("📂 载入数据")
-        self.load_action.setToolTip("从 Excel / CSV 取第一条记录，"
+        self.load_action.setToolTip("从 Excel / CSV 取一行记录，"
                                     "按配方的列名字典映射后填进属性面板")
         self.prop_mgmt_action = toolbar.addAction("🏷️ 属性管理")
         self.prop_mgmt_action.setToolTip("创建/编辑属性对象（名称、来源、类型、选项、默认值）")
@@ -48,6 +46,13 @@ class MainWindow(QMainWindow):
         self.start_btn = QPushButton("🚀 开始录入")
         mark(self.start_btn, "primary")
         toolbar.addWidget(self.start_btn)
+
+        # 单条与批量都从**当前选中的品种**出发（原来批量挂在"保险业务"页上，
+        # 同一件事分两处启动，已按反馈合并到这里）
+        self.batch_btn = QPushButton("📋 批量录入")
+        self.batch_btn.setToolTip("用当前选中的品种批量录入：导入台账 → 串行填表 → 复核")
+        self.batch_btn.clicked.connect(self._on_open_batch_from_workbench)
+        toolbar.addWidget(self.batch_btn)
 
     def _build_splitter(self):
         # 全局唯一的属性库实例：面板/向导/属性管理共用，保存后即刻生效
@@ -75,8 +80,7 @@ class MainWindow(QMainWindow):
         self.property_page = PropertyManagerWidget(self.prop_def_library)
         self.property_page.back_requested.connect(self._show_main_page)
         self.stack.addWidget(self.property_page)
-        # 业务页与批量页都**首次打开时才构造**（避免启动阶段就去碰数据库）
-        self.business_page = None
+        # 批量页**首次打开时才构造**（避免启动阶段就去碰数据库）
         self.batch_page = None
         # 品种编辑页（取代原来的 5 步向导；创建与编辑共用）
         self.product_page = None
@@ -94,7 +98,6 @@ class MainWindow(QMainWindow):
             return
         self.stack.setCurrentIndex(0)
         self.prop_mgmt_action.setText("🏷️ 属性管理")
-        self.business_action.setText("🏢 保险业务")
         self.new_action.setText("+ 新建品种")
 
         product = self.page_panel._product
@@ -115,7 +118,6 @@ class MainWindow(QMainWindow):
         self.product_list.new_btn.clicked.connect(self._on_new_product)
         self.product_list.edit_requested.connect(self._on_edit_product)
         self.prop_mgmt_action.triggered.connect(self._on_manage_properties)
-        self.business_action.triggered.connect(self._on_open_business)
         self.load_action.triggered.connect(self._on_load_data)
 
     def _on_source_extracted(self, source_name: str, values: dict):
@@ -253,47 +255,18 @@ class MainWindow(QMainWindow):
         self.prop_mgmt_action.setText("⬅ 返回主界面")
         self.statusBar().showMessage("属性管理：编辑后记得点「💾 保存」")
 
-    def _on_open_business(self):
-        """打开业务入口页（保险）；再次点击返回主界面。
-
-        结构是「业务 → 操作 → 具体页面」：批量录入不是工具栏上的一级入口，
-        而是保险业务下的一项操作（以后还会有培训报名 / 安全评价）。
-        """
-        if self.business_page is None:
-            from .business_page import BusinessPage
-
-            self.business_page = BusinessPage()
-            self.business_page.single_requested.connect(self._open_single_in_workbench)
-            self.business_page.batch_requested.connect(self._open_batch_page)
-            self.stack.addWidget(self.business_page)
-        elif self.stack.currentWidget() is self.business_page:
-            self._show_main_page()
-            return
-        self.business_page.reload()
-        self.stack.setCurrentWidget(self.business_page)
-        self.business_action.setText("⬅ 返回主界面")
-        self.statusBar().showMessage("保险业务：选一个品种，再选它的录入方式")
-
-    def _open_single_in_workbench(self, product_name: str) -> None:
-        """单条录入：回主界面并选中该品种（在那里填值、点开始录入）。"""
-        self._show_main_page()
-        items = self.product_list.list_widget
-        for i in range(items.count()):
-            if items.item(i).data(Qt.UserRole) == product_name:
-                items.setCurrentRow(i)
-                return
-        self.statusBar().showMessage(f"未找到品种：{product_name}")
+    def _on_open_batch_from_workbench(self) -> None:
+        """工具栏「📋 批量录入」：进批量页，默认用**当前选中的品种**。"""
+        current = self.page_panel._product
+        self._open_batch_page(current.name if current is not None else "")
 
     def _open_batch_page(self, product_name: str = "") -> None:
-        """进入保险业务下的批量录入页（首次打开才构造，避免启动就碰数据库）。
-
-        :param product_name: 预选的品种（从业务页的某个品种点进来时带上）
-        """
+        """进入批量录入页（首次打开才构造，避免启动就碰数据库）。"""
         if self.batch_page is None:
             from .batch_page import BatchPage
 
             self.batch_page = BatchPage()
-            self.batch_page.back_requested.connect(self._on_open_business)
+            self.batch_page.back_requested.connect(self._show_main_page)
             self.stack.addWidget(self.batch_page)
         self.batch_page.refresh_batches()
         if product_name:
@@ -301,8 +274,9 @@ class MainWindow(QMainWindow):
             if combo.findText(product_name) >= 0:
                 combo.setCurrentText(product_name)
         self.stack.setCurrentWidget(self.batch_page)
-        self.business_action.setText("⬅ 返回主界面")
-        self.statusBar().showMessage("保险 › 批量录入：导入台账 → 批量录入 → 逐条复核")
+        self.statusBar().showMessage(
+            f"批量录入：品种「{self.batch_page.product_combo.currentText()}」"
+            "→ 导入台账 → 批量录入 → 逐条复核")
 
     # ------------------------------------------------------------------
     # 载入数据（Excel / CSV → 属性面板）

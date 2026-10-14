@@ -21,56 +21,36 @@ from PyQt5.QtWidgets import QApplication, QPushButton
 
 _APP = QApplication.instance() or QApplication(sys.argv)
 
-from gui.business_page import BusinessPage
 from gui.main_window import MainWindow
 from gui.theme import apply_theme
 
 apply_theme(_APP)
 
 
-def test_business_page_lists_products_with_two_actions():
-    """业务页 = 品种清单，每个品种带自己的「单条 / 批量」两个操作。"""
-    page = BusinessPage()
-
-    assert page._row_widgets, "应列出品种"
-    for name, single, batch in page._row_widgets:
-        assert name, "每行要有品种名"
-        assert "单条" in single.text()
-        assert "批量" in batch.text()
-
-
-def test_business_row_actions_preset_the_product():
-    """从某一行的「批量/单条」进去时，那个品种要被预选（不用再选一次）。"""
+def test_toolbar_batch_button_uses_current_product():
+    """工具栏「📋 批量录入」用**当前选中的品种**启动；页面上的返回回主界面。"""
     window = MainWindow()
-    window.business_action.trigger()
-    name, single, batch = window.business_page._row_widgets[0]
+    assert window.batch_page is None
 
-    batch.click()                                  # 批量：进批量页并预选该品种
-    assert window.batch_page.product_combo.currentText() == name
+    product = next(iter(window.product_list.products.values()))
+    window._on_product_selected(product)          # 相当于在品种库点了它
+    window.batch_btn.click()
 
-    window.batch_page.back_requested.emit()        # 回业务页
-    name, single, batch = window.business_page._row_widgets[0]
-    single.click()                                 # 单条：回主界面并选中该品种
-    assert window.stack.currentIndex() == 0
-    assert window.page_panel._product is not None
-    assert window.page_panel._product.name == name
-
-
-def test_nav_is_business_then_batch():
-    """导航层级：保险（业务）→ 批量录入（操作）→ 页面，且都能返回。"""
-    window = MainWindow()
-
-    assert window.business_page is None and window.batch_page is None
-
-    window.business_action.trigger()                  # 工具栏「保险」
-    assert window.business_page is not None
-    assert window.stack.currentWidget() is window.business_page
-
-    window._open_batch_page()                         # 业务页里的「批量录入」
+    assert window.batch_page is not None
     assert window.stack.currentWidget() is window.batch_page
+    assert window.batch_page.product_combo.currentText() == product.name
 
-    window.batch_page.back_requested.emit()           # 批量页「‹ 返回保险」
-    assert window.stack.currentWidget() is window.business_page
+    window.batch_page.back_requested.emit()        # 「‹ 返回主界面」
+    assert window.stack.currentIndex() == 0
+
+
+def test_batch_without_selected_product_still_opens():
+    """没选品种也能进批量页（用配方里的默认品种），不该报错。"""
+    window = MainWindow()
+    window.batch_btn.click()
+
+    assert window.stack.currentWidget() is window.batch_page
+    assert window.batch_page.product_combo.currentText()
 
 
 def test_load_record_from_file_maps_columns_to_properties():
@@ -241,12 +221,10 @@ def test_align_dialog_suggests_and_returns_rows():
 
 
 def main() -> int:
-    test_business_page_lists_products_with_two_actions()
-    print("  · 业务页：品种清单 + 每行的单条/批量 ✓")
-    test_business_row_actions_preset_the_product()
-    print("  · 从品种行进单条/批量会预选该品种 ✓")
-    test_nav_is_business_then_batch()
-    print("  · 导航：保险 → 批量录入 → 返回 ✓")
+    test_toolbar_batch_button_uses_current_product()
+    print("  · 工具栏「批量录入」用当前选中的品种启动 + 返回 ✓")
+    test_batch_without_selected_product_still_opens()
+    print("  · 未选品种也能进批量页（用配方默认）✓")
     test_batch_page_has_product_selector()
     print("  · 批量页品种选择器（默认取配方、运行用所选）✓")
     test_product_page_edit_roundtrip()

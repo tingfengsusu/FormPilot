@@ -7,10 +7,9 @@
 
 产出在 ``data/selfcheck/``：
 
-    01_main.png       主界面（三栏工作区）
-    02_business.png   业务入口页（保险 → 操作）
-    03_batch.png      批量录入页（面包屑 + 品种选择器）
-    04_product.png    品种编辑页（单页表单）
+    01_main.png       主界面（品种库 + 属性面板 + 填表报告）
+    02_batch.png      批量录入页（品种选择器 + 面包屑）
+    03_product.png    品种编辑页（单页表单）
     05_annotate.png   真浏览器：填完表后的**页面内批注层**（期望值/红框）
     06_report.png     归档对比报告（HTML 渲染）
 
@@ -65,11 +64,8 @@ def shoot_ui() -> None:
     # 不 show()：grab() 不需要窗口可见，这样既不打扰用户又能拿到正常字体
     _save(window, "01_main.png", (1280, 800))
 
-    window.business_action.trigger()
-    _save(window.business_page, "02_business.png", _PAGE_SIZE)
-
-    window._open_batch_page()
-    _save(window.batch_page, "03_batch.png", _PAGE_SIZE)
+    window.batch_btn.click()                     # 批量录入（工具栏，用当前选中的品种）
+    _save(window.batch_page, "02_batch.png", _PAGE_SIZE)
 
     product = None
     for item in window.product_list.products.values():
@@ -79,7 +75,7 @@ def shoot_ui() -> None:
     if product is None:
         product = next(iter(window.product_list.products.values()), None)
     window._open_product_page(product)
-    _save(window.product_page, "04_product.png", _PAGE_SIZE)
+    _save(window.product_page, "03_product.png", _PAGE_SIZE)
 
 
 def shoot_browser() -> None:

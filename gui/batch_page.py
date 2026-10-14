@@ -124,11 +124,11 @@ class BatchPage(QWidget):
         以前这个值只在 config/recipes/*.yaml 里写死，和主界面选的品种是两套配置源。
         """
         row = QHBoxLayout()
-        back = QPushButton("‹ 返回保险")
-        back.setToolTip("回到「保险业务」页（选择其它操作）")
+        back = QPushButton("‹ 返回主界面")
+        back.setToolTip("回到主界面（品种库 + 属性面板）")
         back.clicked.connect(self.back_requested.emit)
         row.addWidget(back)
-        crumb = QLabel("保险 › 批量录入")
+        crumb = QLabel("📋 批量录入")
         mark(crumb, "title")
         row.addWidget(crumb)
 
