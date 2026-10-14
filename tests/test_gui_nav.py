@@ -234,6 +234,54 @@ def test_source_group_accepts_drops_through_inputs():
     assert all(edit.acceptDrops() is False for edit in edits)
 
 
+def test_drop_file_on_group_reads_it():
+    """模拟"把文件拖到大框里"：分组收到 drop 事件 → 调来源识别 → 字段被填上。
+
+    用假来源（不走网络 OCR），只验证拖放这条链路本身是通的。
+    """
+    from PyQt5.QtCore import QMimeData, QPointF, Qt, QUrl
+    from PyQt5.QtGui import QDropEvent
+    from PyQt5.QtWidgets import QApplication
+
+    from gui.widgets.source_group import SourceGroup
+
+    class _FakeSource:
+        name = "假来源"
+        accepts_file_input = True
+
+        def get_fields(self):
+            return ["学生姓名"]
+
+        def extract(self, path):
+            return {"学生姓名": f"来自 {os.path.basename(str(path))}"}
+
+        def is_input_ready(self):
+            return False
+
+    with tempfile.TemporaryDirectory() as td:
+        dropped = os.path.join(td, "某张身份证.png")
+        with open(dropped, "wb") as f:
+            f.write(b"\x89PNG")                       # 内容无所谓，只走拖放链路
+
+        # ① 事件 → 处理函数：dropEvent 会把拖进来的文件路径交给识别流程
+        #（直接调 dropEvent：Qt 的 sendEvent 路由依赖平台拖放状态，这里验的是契约本身）
+        first = SourceGroup("假来源", ["学生姓名"], source=_FakeSource(), field_defs={})
+        calls = []
+        first._process_input = calls.append             # 替身，只记录被调用
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(dropped)])
+        event = QDropEvent(QPointF(20, 20), Qt.CopyAction, mime,
+                           Qt.LeftButton, Qt.NoModifier)
+        first.dropEvent(event)
+        # 注意：Qt 的 toLocalFile() 在 Windows 上返回正斜杠路径，别拿原文比
+        assert len(calls) == 1 and os.path.basename(calls[0]) == "某张身份证.png", calls
+
+        # ② 处理函数 → 填值：识别结果回填到字段输入框
+        second = SourceGroup("假来源", ["学生姓名"], source=_FakeSource(), field_defs={})
+        second._process_input(dropped)
+        assert second.collect_values().get("学生姓名") == "来自 某张身份证.png"
+
+
 def main() -> int:
     test_toolbar_batch_button_uses_current_product()
     print("  · 工具栏「批量录入」用当前选中的品种启动 + 返回 ✓")
@@ -253,6 +301,8 @@ def main() -> int:
     print("  · 从样例表对齐字段：建议 + 打码 + 未命中不写入 ✓")
     test_source_group_accepts_drops_through_inputs()
     print("  · 拖文件到输入框上生效（事件穿透到来源分组）✓")
+    test_drop_file_on_group_reads_it()
+    print("  · 拖到大框里真的会读（合成 drop 事件 → 识别 → 填值）✓")
     print("test_gui_nav.py 全部通过 ✓")
     return 0
 

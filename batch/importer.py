@@ -294,16 +294,30 @@ class Importer:
         except Exception:  # noqa: BLE001
             product = None
         expected = {m.property for m in (product.field_mapping if product else [])}
-
         overlap = mapped & expected
-        if not overlap:
+        missing = expected - overlap
+        preview = "、".join(str(h) for h in headers[:8]) + ("…" if len(headers) > 8 else "")
+
+        # 判定分三种，**别都归成"品种对不上"**（实测：新业务的正确台账会被误杀）
+        if not mapped:
             return False, (
-                "这份台账和当前品种对不上（导入后大概率全部录入失败）：\n"
-                f"· 台账里能认出的字段：{'、'.join(sorted(mapped)) or '（一个都没认出来）'}\n"
-                f"· 当前品种需要：{'、'.join(sorted(expected)) or '（品种未配置字段）'}\n"
-                "→ 请确认批量页顶部的「品种」，或先在品种编辑页用"
-                "「📄 从样例表对齐字段」把列名配好")
-        return True, f"可映射字段 {len(overlap)} 个：{'、'.join(sorted(overlap))}"
+                "列名字典没能认出这份台账的任何列名：\n"
+                f"· 台账表头：{preview}\n"
+                "→ 若是**新业务**的表：先在品种编辑页用「📄 从样例表对齐字段」配一遍列名"
+                "（别名会写进 import_mapping.local.yaml，之后预检才准）；\n"
+                "→ 如果是选错了文件或表头不规范，请重新选择。")
+
+        ratio = len(overlap) / len(expected) if expected else 0.0
+        if ratio < 0.5:
+            return False, (
+                f"覆盖不足：这份台账只能提供 {len(overlap)}/{len(expected)} 个"
+                f"当前品种需要的字段（{ratio:.0%}）：\n"
+                f"· 能提供：{'、'.join(sorted(overlap))}\n"
+                f"· 缺少：{'、'.join(sorted(missing)) or '（无）'}\n"
+                "→ 确认批量页顶部的「品种」是否选对；若是新业务，先对齐字段/补列名字典。")
+
+        return True, (f"覆盖 {len(overlap)}/{len(expected)} 个字段"
+                      f"（{ratio:.0%}）：{'、'.join(sorted(overlap))}")
 
     def import_file(self, path: str, batch_name: str = "",
                     sheet: Optional[str] = None) -> ImportReport:

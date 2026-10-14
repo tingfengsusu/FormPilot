@@ -87,15 +87,41 @@ def test_import_records_product_and_preflight_blocks_mismatch():
             report = Importer(db, recipe=recipe).import_file(path, batch_name="品种绑定")
             assert report.batch.product == recipe.product_name   # 记下品种
 
-            # 换成发票查验品种：这份学平险台账就对不上了
+            # 换成发票查验品种：这份学平险台账覆盖不足（不是"品种选错"那么简单）
             other = copy.deepcopy(recipe)
             other.execute["product"] = "发票查验_国税总局"
             ok, detail = Importer(db, recipe=other).check_table(path)
-            assert not ok and "对不上" in detail
+            assert not ok and ("覆盖不足" in detail or "没能认出" in detail)
 
             # 用回学平险品种：能对上
             ok, detail = Importer(db, recipe=recipe).check_table(path)
-            assert ok and "可映射字段" in detail
+            assert ok and "覆盖" in detail
+        finally:
+            db.close()
+
+
+def test_new_business_table_points_to_alignment():
+    """新业务的表（发票列名不在学平险字典里）→ 提示"先去对齐字段"，而不是怪品种选错。"""
+    import copy
+
+    invoice_csv = """发票代码,发票号码,开票日期,开具金额(不含税)
+011002100311,25312000000012345678,2026-10-20,1130.00
+"""
+    with tempfile.TemporaryDirectory() as td:
+        use_temp_key(td)
+        path = os.path.join(td, "发票.csv")
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write(invoice_csv)
+
+        db = BatchDB(os.path.join(td, "t.db"))
+        try:
+            recipe = copy.deepcopy(Recipe.load())
+            recipe.execute["product"] = "发票查验_国税总局"
+            ok, detail = Importer(db, recipe=recipe).check_table(path)
+
+            assert not ok
+            assert "没能认出" in detail              # 是字典不认列名，不是品种错
+            assert "从样例表对齐字段" in detail       # 给出可操作的下一步
         finally:
             db.close()
 
@@ -124,7 +150,9 @@ if __name__ == "__main__":
     test_import_records_real_row_numbers()
     print("  · 导入记录带真实行号（表头第 1 行 → 数据从第 2 行）✓")
     test_import_records_product_and_preflight_blocks_mismatch()
-    print("  · 批次记住品种 + 导入前预检拦住「台账/品种对不上」 ✓")
+    print("  · 批次记住品种 + 预检拦住「覆盖不足」（不是简单对不上）✓")
+    test_new_business_table_points_to_alignment()
+    print("  · 新业务表 → 提示先「从样例表对齐字段」（不误杀正确台账）✓")
     test_load_one_row_by_index()
     print("  · 载入数据：可按行号取（不再固定第一条）✓")
     print("test_trace_and_dict.py 全部通过 ✓")
