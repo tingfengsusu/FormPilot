@@ -486,17 +486,17 @@ class BatchPage(QWidget):
         if self._worker is not None and self._worker.isRunning():
             return
 
-        # 批次是为哪个品种导入的？和当前选的不一致就先问一句
-        batch = self.db.get_batch(batch_id)
-        chosen = self.product_combo.currentText()
-        if batch is not None and batch.product and batch.product != chosen:
+        from batch.runner import BatchRunner
+
+        runner = BatchRunner(self.db, recipe=self._runner_recipe())
+
+        # 运行前检查：这批数据是不是给当前品种的（老批次没有品种标记时现场查源文件）
+        ok, detail = runner.preflight_batch(batch_id)
+        if not ok:
             from .dialogs import ask
 
-            if not ask(self, "品种不一致",
-                       f"批次「{batch.name}」是为「{batch.product}」导入的，"
-                       f"当前选的是「{chosen}」。\n\n"
-                       "继续会用当前品种的页面填这批数据，确定吗？",
-                       yes="继续", no="取消"):
+            if not ask(self, "运行前检查", detail + "\n\n仍然开始吗？",
+                       yes="仍然开始", no="取消"):
                 return
         if QMessageBox.question(
                 self, "批量录入",
@@ -504,9 +504,6 @@ class BatchPage(QWidget):
                 "（**不会自动提交**），期间请勿操作浏览器。\n继续吗？") != QMessageBox.Yes:
             return
 
-        from batch.runner import BatchRunner
-
-        runner = BatchRunner(self.db, recipe=self._runner_recipe())
         worker = _RunWorker(runner, batch_id, parent=self)
 
         # 逐条确认：配方里 confirm_policy: per_record 时，每填完一条弹窗问通过/打回

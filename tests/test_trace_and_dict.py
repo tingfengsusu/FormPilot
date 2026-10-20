@@ -126,6 +126,47 @@ def test_new_business_table_points_to_alignment():
             db.close()
 
 
+def test_preflight_batch_cases():
+    """运行前检查：带标记一致/不一致；老批次按源文件现场查；源文件缺失放行并说明。"""
+    import copy
+
+    from batch.runner import BatchRunner
+
+    with tempfile.TemporaryDirectory() as td:
+        use_temp_key(td)
+        path = _write_csv(td)
+        db = BatchDB(os.path.join(td, "t.db"))
+        try:
+            recipe = Recipe.load()
+
+            same = db.create_batch("同类", source_file=path,
+                                   product=recipe.product_name)
+            ok, detail = BatchRunner(db, recipe=recipe).preflight_batch(same.id)
+            assert ok and "品种一致" in detail
+
+            other = db.create_batch("异类", source_file=path,
+                                    product="发票查验_国税总局")
+            ok, detail = BatchRunner(db, recipe=recipe).preflight_batch(other.id)
+            assert not ok and "发票查验" in detail
+
+            # 老批次（没有品种标记）→ 拿源文件现场查
+            legacy = db.create_batch("老批次", source_file=path)
+            ok, detail = BatchRunner(db, recipe=recipe).preflight_batch(legacy.id)
+            assert ok, detail
+
+            wrong = copy.deepcopy(recipe)
+            wrong.execute["product"] = "发票查验_国税总局"
+            ok, detail = BatchRunner(db, recipe=wrong).preflight_batch(legacy.id)
+            assert not ok and ("覆盖不足" in detail or "认不出" in detail)
+
+            # 源文件找不到 → 放行但明确说"跳过"
+            missing = db.create_batch("无源", source_file=os.path.join(td, "nope.csv"))
+            ok, detail = BatchRunner(db, recipe=recipe).preflight_batch(missing.id)
+            assert ok and "跳过" in detail
+        finally:
+            db.close()
+
+
 def test_load_one_row_by_index():
     """单条「载入数据」按行号取数（第 2 行 = 表里第 3 行）。"""
     from PyQt5.QtWidgets import QApplication
@@ -153,6 +194,8 @@ if __name__ == "__main__":
     print("  · 批次记住品种 + 预检拦住「覆盖不足」（不是简单对不上）✓")
     test_new_business_table_points_to_alignment()
     print("  · 新业务表 → 提示先「从样例表对齐字段」（不误杀正确台账）✓")
+    test_preflight_batch_cases()
+    print("  · 运行前检查：品种一致/不一致/老批次查源文件/源文件缺失 ✓")
     test_load_one_row_by_index()
     print("  · 载入数据：可按行号取（不再固定第一条）✓")
     print("test_trace_and_dict.py 全部通过 ✓")

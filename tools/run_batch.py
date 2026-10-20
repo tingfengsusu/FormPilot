@@ -157,6 +157,17 @@ def main(argv=None) -> int:
             confirmer = (lambda *_: True) if args.yes else _interactive_confirmer()
 
         runner = BatchRunner(db, recipe=recipe, on_confirm=confirmer)
+
+        # 运行前检查：这批数据是不是给当前品种的
+        fit_ok, fit_detail = runner.preflight_batch(args.batch)
+        if not fit_ok:
+            print("\n⚠ 运行前检查：" + fit_detail)
+            if not args.yes:
+                try:
+                    input("仍然开始？按回车继续（Ctrl+C 取消）... ")
+                except (EOFError, KeyboardInterrupt):
+                    print("已取消。")
+                    return 2
         if not args.yes:
             print(f"即将录入批次 #{args.batch}"
                   + (f" 的前 {args.limit} 条" if args.limit else " 的全部「已确认」记录"))

@@ -155,6 +155,38 @@ class BatchRunner:
                     (self.recipe.execute.get("required_properties") or [])]
         return missing_mappings(product, required)
 
+    def preflight_batch(self, batch_id: Optional[int]) -> Tuple[bool, str]:
+        """运行**前**检查：这批数据是不是给当前品种的。
+
+        三种情况：
+        - 批次带品种标记且一致 → 通过（导入时已预检过，不重复打扰）
+        - 批次带品种标记但不一致 → 不通过（返回两者名）
+        - 老批次没有标记 → 拿它的源文件现场跑一次 ``check_table``；
+          源文件找不到就放行并说明"跳过"（不拦，但让人知道没检查）
+        """
+        batch = self.db.get_batch(batch_id) if batch_id is not None else None
+        if batch is None:
+            return False, "批次不存在（可能被删了）"
+
+        current = self.recipe.product_name
+        if batch.product:
+            if batch.product == current:
+                return True, f"品种一致：{batch.product}"
+            return False, (f"批次「{batch.name}」是为「{batch.product}」导入的，"
+                           f"当前批量页选的是「{current}」。\n"
+                           "继续会用当前品种的页面填这批数据。")
+
+        path = str(batch.source_file or "")
+        if not path or not os.path.exists(path):
+            return True, ("该批次没有品种标记，源文件也找不到 —— "
+                          "跳过运行前检查（建议先重新导入一次以记录品种）")
+        from .importer import Importer
+
+        ok, detail = Importer(self.db, recipe=self.recipe).check_table(path)
+        if ok:
+            return True, detail
+        return False, ("该批次没有品种标记，按源文件现场检查：\n" + detail)
+
     # ------------------------------------------------------------------
     # 取记录 / 建属性池
     # ------------------------------------------------------------------
