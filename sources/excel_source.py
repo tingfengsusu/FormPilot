@@ -22,7 +22,9 @@ class ExcelSource(PropertySource):
         self._last_result: Dict[str, Any] = {}
 
     def get_fields(self) -> list[str]:
-        return ["学校", "班级", "学生姓名", "监护人姓名", "监护人电话"]
+        from core.vocab import source_fields
+
+        return source_fields(self.name)
 
     def extract(self, input_data: Any) -> Dict[str, Any]:
         file_path = input_data if isinstance(input_data, str) else str(input_data)

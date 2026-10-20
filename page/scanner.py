@@ -152,9 +152,6 @@ class Scanner:
         return None
 
     def _mock_fields(self) -> List[dict]:
-        return [
-            {"locator": 'input[name="xm"]', "placeholder": "请输入学生姓名", "label": "学生姓名"},
-            {"locator": 'input[name="sfzh"]', "placeholder": "请输入身份证号", "label": "学生身份证号"},
-            {"locator": 'input[name="lxdh"]', "placeholder": "请输入监护人电话", "label": "监护人电话"},
-            {"locator": 'select[name="baoxian"]', "placeholder": "", "label": "保险方案"},
-        ]
+        from core.vocab import scanner_mock_fields
+
+        return [dict(item) for item in scanner_mock_fields()]

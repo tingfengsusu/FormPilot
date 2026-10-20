@@ -44,11 +44,7 @@ def household_mock(image_path: Optional[str] = None) -> Dict[str, Any]:
 
 
 def excel_mock(file_path: Optional[str] = None) -> Dict[str, Any]:
-    """Excel 名单 Mock 结果。"""
-    return _with_mock_mark({
-        "学校": "洛阳市实验小学",
-        "班级": "三年级二班",
-        "学生姓名": "测试学生",
-        "监护人姓名": "王大力",
-        "监护人电话": "13800000000",
-    })
+    """Excel 名单 Mock 结果（样例数据在 config/engine_vocab.yaml）。"""
+    from core.vocab import mock_data
+
+    return _with_mock_mark(mock_data("excel"))

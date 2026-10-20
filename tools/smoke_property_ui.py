@@ -137,23 +137,9 @@ def main() -> None:
     assert win.stack.currentIndex() == 0, "再次点击应返回主界面"
     assert win.prop_mgmt_action.text() == "🏷️ 属性管理"
 
-    # ---- 3. 品种向导第 2 步：属性列表来自属性库 ----
+    # ---- 3. （品种向导已退休 → 单页品种编辑页，相关检查见下）----
     lib.upsert(PropertyDef(name="就读年级", source="Excel名单",
                            field_type=TYPE_SELECT, options=["一年级", "二年级"]))
-    from gui.product_wizard import ProductWizard
-
-    wizard = ProductWizard(prop_def_library=lib)
-    attr = wizard.attr_page
-    labels = [attr.list_widget.item(i).data(Qt.UserRole)
-              for i in range(attr.list_widget.count())]
-    assert "就读年级" in labels, "向导属性列表应包含自定义属性"
-    assert "学生姓名" in labels, "向导属性列表应包含内置属性"
-
-    for i in range(attr.list_widget.count()):
-        if attr.list_widget.item(i).data(Qt.UserRole) == "就读年级":
-            attr.list_widget.item(i).setCheckState(Qt.Checked)
-    attr.reload()
-    assert "就读年级" in attr.selected_properties(), "reload 后勾选应保留"
 
     # ---- 4. 属性面板：按属性对象分组 + 下拉渲染 ----
     from gui.property_panel import PropertyPanel
@@ -224,21 +210,19 @@ def main() -> None:
     qr_path = os.path.join(tmpdir, "entry_qr.png")
     qrcode.make(qr_url).save(qr_path)
 
-    wizard2 = ProductWizard(prop_def_library=lib)
-    url_page = wizard2.url_page
+    # 品种编辑页：二维码导入 URL（原向导 URL 页的等价检查）
+    from gui.product_page import ProductPage
+
+    page = ProductPage(prop_def_library=lib)
+    url_edit = page.url_edit
     old_dialog = QFileDialog.getOpenFileName
     QFileDialog.getOpenFileName = staticmethod(lambda *a, **k: (qr_path, ""))
     try:
-        url_page._on_import_qr()
+        page.import_url_from_qr()
     finally:
         QFileDialog.getOpenFileName = old_dialog
-    assert url_page.url_edit.text() == qr_url, \
-        f"应从二维码导入 URL: {url_page.url_edit.text()}"
-
-    # 扫描为空时给出引导（而非空白页）
-    wizard2.scan_page.show_fields([])
-    hint = wizard2.scan_page.text_view.toPlainText()
-    assert "未扫描到任何输入框" in hint and "二维码" in hint
+    assert url_edit.text() == qr_url, \
+        f"应从二维码导入 URL: {url_edit.text()}"
 
     print("smoke_property_ui.py 全部通过 ✓")
 

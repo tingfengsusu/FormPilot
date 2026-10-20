@@ -21,12 +21,13 @@ from datetime import date
 from typing import Any, Callable, Dict, Optional
 
 from core.property_pool import PropertyPool
+from core.vocab import rule as _rule
 
 #: 年级区间 → 方案档位（文案与测试页 select 的 option 文本一致）。
+#: 业务数据在 config/engine_vocab.yaml（引擎不写业务词）。
 GRADE_PLAN_MAP = [
-    (1, 3, "基础版（100元）"),
-    (4, 6, "加强版（150元）"),
-    (7, 12, "尊享版（200元）"),
+    (int(lo), int(hi), str(plan))
+    for lo, hi, plan in (_rule("grade_plan_map", []) or [])
 ]
 
 _CN_DIGITS = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
@@ -54,7 +55,12 @@ def grade_from_class(text: Any) -> Optional[int]:
     """从班级文本解析年级（如 三年级二班 → 3、6年级 → 6）。"""
     if not text:
         return None
-    m = re.search(r"([一二三四五六七八九十]{1,3}|\d{1,2})\s*年级", str(text))
+    from core.vocab import rule
+
+    pattern = rule("grade_pattern")
+    if not pattern:
+        return None
+    m = re.search(str(pattern), str(text))
     if not m:
         return None
     token = m.group(1)
@@ -91,11 +97,20 @@ def recommend_by_grade(pool: PropertyPool,
     显式的「年级」属性是批量投保场景新增的（台账里有独立的年级列，
     如「五年级」，比从班级号或出生日期推算更可靠）。
     """
-    grade = grade_from_class(pool.get("年级"))
+    from core.vocab import rule
+
+    def _first(keys) -> Any:
+        for key in keys or []:
+            value = pool.get(key)
+            if value not in (None, ""):
+                return value
+        return None
+
+    grade = grade_from_class(_first(rule("grade_keys", [])))
     if grade is None:
-        grade = grade_from_class(pool.get("班级"))
+        grade = grade_from_class(_first(rule("class_keys", [])))
     if grade is None:
-        grade = grade_from_birth(pool.get("出生日期"), today)
+        grade = grade_from_birth(_first(rule("birth_keys", [])), today)
     if grade is None:
         return None
     if grade < 1:

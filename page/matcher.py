@@ -14,14 +14,16 @@ from core.config import config
 class FieldMatcher:
     """把页面字段名（如 'xm'）映射到品种属性名（如 '学生姓名'）。"""
 
-    _keyword_map = {
-        "学生姓名": ["xm", "name", "姓名", "student"],
-        "学生身份证号": ["sfzh", "idcard", "身份证", "sfz", "id"],
-        "监护人姓名": ["jhrmc", "guardian", "监护人", "jhr"],
-        "监护人电话": ["lxdh", "phone", "tel", "电话", "dh", "mobile"],
-        "保险方案": ["baoxian", "plan", "方案", "bx", "scheme"],
-        "保险员姓名": ["bxyxm", "agent", "保险员", "业务员"],
-    }
+    @property
+    def _keyword_map(self) -> Dict[str, List[str]]:
+        """页面字段名 → 属性名的关键词表。
+
+        词表在 ``config/engine_vocab.yaml``（数据，不是代码）——
+        引擎不认识具体业务；换场景只改配置。
+        """
+        from core.vocab import matcher_keywords
+
+        return matcher_keywords()
 
     def match(self, page_fields: List[dict], product_fields: List[str]) -> Dict[str, Any]:
         """返回 {属性名: locator} 映射，不确定的设为 None。

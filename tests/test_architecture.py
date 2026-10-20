@@ -46,22 +46,9 @@ KNOWN_EDGES = {
 }
 
 #: 已知的引擎业务词：(相对路径, 业务词) → 允许的出现次数
-KNOWN_WORDS: dict = {
-    # 首次由 --report 跑出来的实际清单；P2 清理时改小或删除
-    ("core/mock_data.py", "学校"): 1,
-    ("core/mock_data.py", "年级"): 1,
-    ("core/mock_data.py", "班级"): 1,
-    ("core/mock_data.py", "监护人"): 2,
-    ("core/rule_engine.py", "年级"): 2,
-    ("core/rule_engine.py", "班级"): 1,
-    ("page/matcher.py", "保险方案"): 1,
-    ("page/matcher.py", "监护人"): 3,
-    ("page/scanner.py", "保险方案"): 1,
-    ("page/scanner.py", "监护人"): 2,
-    ("sources/excel_source.py", "学校"): 1,
-    ("sources/excel_source.py", "班级"): 1,
-    ("sources/excel_source.py", "监护人"): 2,
-}
+#: **已清零**（P2 完成：业务词全部搬到 config/engine_vocab.yaml）。
+#: 以后新增一处就会让测试失败——这正是想要的效果。
+KNOWN_WORDS: dict = {}
 
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", "data", ".venv", "venv",
               "dist", "build", ".pytest_cache"}
