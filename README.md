@@ -37,10 +37,6 @@
 
 ## 截图
 
-**主界面**：左侧品种库，中间按来源分组的属性面板，右侧页面预览与填表。
-
-![主界面](docs/screenshots/01-main-window.png)
-
 **品种编辑**：一张表单 = 一个品种。每行是「属性 ↔ 页面 locator」，可配必填、回读校验、填写策略、值转换。
 
 ![品种编辑](docs/screenshots/02-product-editor.png)
